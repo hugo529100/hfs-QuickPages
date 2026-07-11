@@ -14,8 +14,45 @@
         const iframeRef = useRef(null);
         const activeTabRef = useRef(activeTab);
         const headerRef = useRef(null);
+        const panelRef = useRef(null); // 【新增】面板引用
         
         useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
+        
+        // 【新增】处理点击空白区域关闭
+        useEffect(() => {
+            const handleClickOutside = (e) => {
+                if (!panelRef.current || isMobile) return;
+                
+                const panel = panelRef.current;
+                const panelRect = panel.getBoundingClientRect();
+                
+                // 计算扩展的点击区域（面板外30px）
+                const expandedRect = {
+                    left: panelRect.left - 30,
+                    right: panelRect.right + 30,
+                    top: panelRect.top - 30,
+                    bottom: panelRect.bottom + 30
+                };
+                
+                // 检查点击是否在扩展区域之外
+                if (e.clientX < expandedRect.left || 
+                    e.clientX > expandedRect.right || 
+                    e.clientY < expandedRect.top || 
+                    e.clientY > expandedRect.bottom) {
+                    handleClose();
+                }
+            };
+            
+            // 延迟添加事件监听，避免立即触发
+            const timer = setTimeout(() => {
+                document.addEventListener('mousedown', handleClickOutside);
+            }, 100);
+            
+            return () => {
+                clearTimeout(timer);
+                document.removeEventListener('mousedown', handleClickOutside);
+            };
+        }, [isMobile, onClose]);
         
         // 【新增】当 activeTab 变化时，保存到 localStorage
         useEffect(() => {
@@ -158,18 +195,14 @@
                     setTabs(data.tabs || []);
                     setTabNames(data.tabNames || {});
                     
-                    // 【修改】优先使用缓存的 tab，如果缓存的 tab 不存在则使用第一个
                     const savedTab = localStorage.getItem('quickpages-active-tab');
                     const availableTabNames = (data.tabs || []).map(t => t.name);
                     
                     if (savedTab && availableTabNames.includes(savedTab)) {
-                        // 缓存中有上次选择的 tab，且它仍然存在
                         setActiveTab(savedTab);
                     } else if (data.tabs?.length > 0 && !activeTabRef.current) {
-                        // 没有缓存，或者缓存的不存在，则使用第一个
                         setActiveTab(data.tabs[0].name);
                     } else if (data.tabs?.length > 0 && !data.tabs.find(t => t.name === activeTabRef.current)) {
-                        // 当前 activeTab 不在列表中，回退到第一个
                         setActiveTab(data.tabs[0].name);
                     }
                 })
@@ -193,7 +226,6 @@
                             ).filter(Boolean);
                             setTabs(orderedTabs);
                             if (!data.tabs.includes(activeTabRef.current)) {
-                                // 如果当前标签被删除，选择第一个
                                 setActiveTab(data.tabs[0] || '');
                             }
                         }
@@ -241,7 +273,10 @@
             }).catch(e => console.error('reorder:', e));
         };
 
-        return h('div', { className: `qp-panel ${isMobile ? 'qp-mobile' : 'qp-desktop'} ${closing ? 'qp-closing' : ''}` },
+        return h('div', { 
+            className: `qp-panel ${isMobile ? 'qp-mobile' : 'qp-desktop'} ${closing ? 'qp-closing' : ''}`,
+            ref: panelRef // 【新增】绑定面板引用
+        },
             h('div', { className: 'qp-panel-header', ref: headerRef },
                 h('div', { className: 'qp-header-left' },
                     h('span', { className: 'qp-panel-title' }, '※ Pages'),
@@ -317,22 +352,22 @@
         );
     }
 
-function QuickPageApp() {
-    const { username } = HFS.useSnapState();
-    const [show, setShow] = useState(false);
+    function QuickPageApp() {
+        const { username } = HFS.useSnapState();
+        const [show, setShow] = useState(false);
 
-    useEffect(() => {
-        const fn = () => setShow(prev => !prev);
-        window.addEventListener('toggle-quickpages', fn);
-        return () => window.removeEventListener('toggle-quickpages', fn);
-    }, []);
+        useEffect(() => {
+            const fn = () => setShow(prev => !prev);
+            window.addEventListener('toggle-quickpages', fn);
+            return () => window.removeEventListener('toggle-quickpages', fn);
+        }, []);
 
-    if (!username || !show) return null;
+        if (!username || !show) return null;
 
-    return h('div', {
-        className: 'qp-overlay'
-    }, h(QuickPagePanel, { onClose: () => setShow(false) }));
-}
+        return h('div', {
+            className: 'qp-overlay'
+        }, h(QuickPagePanel, { onClose: () => setShow(false) }));
+    }
 
     if (HFS.state.username) {
         HFS.onEvent('appendMenuBar', () => {
@@ -341,7 +376,7 @@ function QuickPageApp() {
                 onClick() { window.dispatchEvent(new CustomEvent('toggle-quickpages')) },
                 title: 'Open Quick Pages'
             }, [
-                h('span', { 'aria-hidden': 'true' }, '※'),
+                h('span', { 'aria-hidden': 'true' }, '◳'),
                 h('span', { className: 'btn-label' }, 'Pages')
             ]);
         });
