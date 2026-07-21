@@ -10,23 +10,29 @@
         const [tabNames, setTabNames] = useState({});
         const [renamingTab, setRenamingTab] = useState(null);
         const [renameValue, setRenameValue] = useState('');
+        const [isFullscreen, setIsFullscreen] = useState(false);
+        const [isMultiColumn, setIsMultiColumn] = useState(false);
+        const [otherTabData, setOtherTabData] = useState({});
+        const [fullscreenLoadState, setFullscreenLoadState] = useState({});
         const renameInputRef = useRef(null);
         const iframeRef = useRef(null);
         const activeTabRef = useRef(activeTab);
         const headerRef = useRef(null);
-        const panelRef = useRef(null); // 【新增】面板引用
+        const panelRef = useRef(null);
+        const isFullscreenRef = useRef(false);
+        const fullscreenGridRef = useRef(null);
         
         useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
+        useEffect(() => { isFullscreenRef.current = isFullscreen; }, [isFullscreen]);
         
-        // 【新增】处理点击空白区域关闭
+        // 处理点击空白区域关闭（非全屏模式）
         useEffect(() => {
             const handleClickOutside = (e) => {
-                if (!panelRef.current || isMobile) return;
+                if (!panelRef.current || isMobile || isFullscreenRef.current) return;
                 
                 const panel = panelRef.current;
                 const panelRect = panel.getBoundingClientRect();
                 
-                // 计算扩展的点击区域（面板外30px）
                 const expandedRect = {
                     left: panelRect.left - 30,
                     right: panelRect.right + 30,
@@ -34,7 +40,6 @@
                     bottom: panelRect.bottom + 30
                 };
                 
-                // 检查点击是否在扩展区域之外
                 if (e.clientX < expandedRect.left || 
                     e.clientX > expandedRect.right || 
                     e.clientY < expandedRect.top || 
@@ -43,7 +48,6 @@
                 }
             };
             
-            // 延迟添加事件监听，避免立即触发
             const timer = setTimeout(() => {
                 document.addEventListener('mousedown', handleClickOutside);
             }, 100);
@@ -54,7 +58,7 @@
             };
         }, [isMobile, onClose]);
         
-        // 【新增】当 activeTab 变化时，保存到 localStorage
+        // 保存 activeTab 到 localStorage
         useEffect(() => {
             if (activeTab) {
                 try {
@@ -76,6 +80,85 @@
             const handleResize = () => setIsMobile(window.innerWidth <= 768);
             window.addEventListener('resize', handleResize);
             return () => window.removeEventListener('resize', handleResize);
+        }, []);
+
+        // 全屏模式切换
+        const toggleFullscreen = useCallback(() => {
+            const el = document.documentElement;
+            
+            if (!isFullscreenRef.current) {
+                el.requestFullscreen?.()
+                    .then(() => {
+                        setIsFullscreen(true);
+                    })
+                    .catch(err => {
+                        HFS.toast?.("Enter fullscreen failed: " + err, 'error');
+                    });
+            } else {
+                document.exitFullscreen?.();
+                setIsFullscreen(false);
+                setIsMultiColumn(false);
+                setOtherTabData({});
+                setFullscreenLoadState({});
+            }
+        }, []);
+
+        // 监听全屏变化事件
+        useEffect(() => {
+            const handleFullscreenChange = () => {
+                const isFs = !!document.fullscreenElement;
+                setIsFullscreen(isFs);
+                if (!isFs) {
+                    setIsMultiColumn(false);
+                    setOtherTabData({});
+                    setFullscreenLoadState({});
+                }
+            };
+            document.addEventListener('fullscreenchange', handleFullscreenChange);
+            return () => {
+                document.removeEventListener('fullscreenchange', handleFullscreenChange);
+            };
+        }, []);
+
+        // 切换三列模式
+        const toggleMultiColumn = useCallback(() => {
+            const newState = !isMultiColumn;
+            setIsMultiColumn(newState);
+            if (newState) {
+                // 加载其他 tab 的数据
+                const otherTabs = tabs.filter(t => t.name !== activeTab);
+                otherTabs.forEach(tab => {
+                    loadOtherTabNotes(tab);
+                });
+            } else {
+                setOtherTabData({});
+                setFullscreenLoadState({});
+            }
+        }, [isMultiColumn, tabs, activeTab]);
+
+        // 加载其他 tab 的 notes
+        const loadOtherTabNotes = useCallback(async (tab) => {
+            if (!tab) return;
+            try {
+                const res = await fetch(`/~/api/quickpages/tabs`);
+                const data = await res.json();
+                const tabData = data.tabs?.find(t => t.name === tab);
+                if (tabData && tabData.url) {
+                    setOtherTabData(prev => ({
+                        ...prev,
+                        [tab]: {
+                            url: tabData.url,
+                            loaded: true
+                        }
+                    }));
+                    setFullscreenLoadState(prev => ({
+                        ...prev,
+                        [tab]: { loading: false }
+                    }));
+                }
+            } catch (e) {
+                console.error('load other tab:', e);
+            }
         }, []);
 
         useEffect(() => {
@@ -138,6 +221,9 @@
 
         const handleClose = () => {
             setClosing(true);
+            if (isFullscreenRef.current) {
+                document.exitFullscreen?.().catch(() => {});
+            }
             setTimeout(onClose, 300);
         };
 
@@ -182,11 +268,22 @@
 
         useEffect(() => {
             const originalOverflow = document.body.style.overflow;
-            document.body.style.overflow = 'hidden';
+            if (!isFullscreenRef.current) {
+                document.body.style.overflow = 'hidden';
+            }
             return () => {
                 document.body.style.overflow = originalOverflow;
             };
         }, []);
+
+        // 全屏模式下 body 滚动控制
+        useEffect(() => {
+            if (isFullscreen) {
+                document.body.style.overflow = '';
+            } else {
+                document.body.style.overflow = 'hidden';
+            }
+        }, [isFullscreen]);
 
         const loadTabs = useCallback(() => {
             fetch('/~/api/quickpages/tabs')
@@ -273,26 +370,88 @@
             }).catch(e => console.error('reorder:', e));
         };
 
-        return h('div', { 
-            className: `qp-panel ${isMobile ? 'qp-mobile' : 'qp-desktop'} ${closing ? 'qp-closing' : ''}`,
-            ref: panelRef // 【新增】绑定面板引用
-        },
-            h('div', { className: 'qp-panel-header', ref: headerRef },
-                h('div', { className: 'qp-header-left' },
-                    h('span', { className: 'qp-panel-title' }, '※ Pages'),
-                    h('button', {
-                        className: 'qp-refresh-btn',
-                        onClick: handleRefresh,
-                        title: 'Refresh current page',
-                        disabled: !activeTabData?.url
-                    }, '↻')
-                ),
-                h('div', { className: 'qp-header-right' },
-                    h('button', { className: 'qp-close-btn', onClick: handleClose }, '×')
-                )
-            ),
+        // 获取三列显示的 tabs
+        const getMultiColumns = useCallback(() => {
+            if (!isMultiColumn) return [];
+            const activeIdx = tabs.findIndex(t => t.name === activeTab);
+            if (activeIdx === -1) return tabs.slice(0, 3);
             
-            h('div', { className: 'qp-tabs-container' },
+            const result = [];
+            for (let i = 0; i < 3; i++) {
+                const idx = (activeIdx + i) % tabs.length;
+                result.push(tabs[idx]);
+            }
+            return result;
+        }, [isMultiColumn, tabs, activeTab]);
+
+        const multiColumns = useMemo(() => {
+            return getMultiColumns();
+        }, [getMultiColumns]);
+
+        // 渲染内联 tabs（仅全屏模式使用）
+        const renderTabsInline = () => {
+            return h('div', { 
+                className: 'qp-tabs-inline',
+                style: {
+                    display: 'flex',
+                    alignItems: 'center',
+                    overflowX: 'auto',
+                    flex: '1',
+                    padding: '0 4px',
+                    margin: '0 4px',
+                    gap: '0',
+                    minWidth: '0'
+                }
+            },
+                tabs.map((tab, i) =>
+                    h('span', { key: tab.name, className: 'qp-tab-wrapper-inline', style: { flexShrink: 0 } },
+                        i > 0 && h('span', { className: 'qp-tab-sep-inline', style: { color: 'var(--text)', opacity: 0.3, padding: '0 2px' } }, '|'),
+                        renamingTab === tab.name ? h('input', {
+                            ref: renameInputRef,
+                            className: 'qp-tab-rename-input',
+                            value: renameValue,
+                            onChange: (e) => setRenameValue(e.target.value),
+                            onKeyDown: handleRenameKeyDown,
+                            onBlur: handleRenameSave,
+                            placeholder: tab.name,
+                            style: { minWidth: '40px', maxWidth: '120px', padding: '2px 6px', fontSize: '14px' }
+                        }) : h('button', {
+                            className: `qp-tab-inline ${activeTab === tab.name ? 'qp-tab-active-inline' : ''}`,
+                            onClick: () => {
+                                setActiveTab(tab.name);
+                                if (isMultiColumn) {
+                                    // 切换时重新加载其他列
+                                    const otherTabs = tabs.filter(t => t.name !== tab.name);
+                                    otherTabs.forEach(t => loadOtherTabNotes(t));
+                                }
+                            },
+                            onDoubleClick: (e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                handleRenameStart(tab.name);
+                            },
+                            title: 'Double-click to rename',
+                            style: {
+                                padding: '4px 8px',
+                                fontSize: '14px',
+                                background: 'none',
+                                border: activeTab === tab.name ? '1px solid var(--text)' : 'none',
+                                borderBottom: activeTab === tab.name ? 'none' : 'none',
+                                borderRadius: '0.4em 0.4em 0 0',
+                                color: 'var(--text)',
+                                cursor: 'pointer',
+                                whiteSpace: 'nowrap',
+                                fontWeight: activeTab === tab.name ? 'bold' : 'normal'
+                            }
+                        }, getTabDisplayName(tab.name))
+                    )
+                )
+            );
+        };
+
+        // 渲染独立的 tabs 行（非全屏模式使用）
+        const renderTabsStandalone = () => {
+            return h('div', { className: 'qp-tabs-container' },
                 h('div', { className: 'qp-tabs' },
                     tabs.map((tab, i) =>
                         h('span', { key: tab.name, className: 'qp-tab-wrapper' },
@@ -332,21 +491,199 @@
                         title: 'Move right'
                     }, '▶')
                 )
+            );
+        };
+
+        return h('div', { 
+            className: `qp-panel ${isMobile ? 'qp-mobile' : 'qp-desktop'} ${closing ? 'qp-closing' : ''} ${isFullscreen ? 'qp-fullscreen' : ''}`,
+            ref: panelRef,
+            style: isFullscreen ? {
+                width: '100%',
+                maxWidth: '100%',
+                height: '100vh',
+                top: 0,
+                left: 0,
+                right: 0,
+                borderLeft: 'none',
+                borderRadius: 0,
+                zIndex: 9999
+            } : {}
+        },
+            // Header 标题行
+            h('div', { 
+                className: 'qp-panel-header', 
+                ref: headerRef,
+                style: isFullscreen ? { 
+                    borderBottom: '1px solid var(--faint-contrast)',
+                    padding: '4px 8px',
+                    flexShrink: 0
+                } : {}
+            },
+                h('div', { 
+                    className: 'qp-header-left',
+                    style: { flexShrink: 0 }
+                },
+                    h('span', { 
+                        className: 'qp-panel-title',
+                        onClick: toggleFullscreen,
+                        style: { cursor: 'pointer' },
+                        title: isFullscreen ? 'Click to exit fullscreen' : 'Click to enter fullscreen'
+                    }, isFullscreen ? '※ Pages ✦' : '※ Pages'),
+                    h('button', {
+                        className: 'qp-refresh-btn',
+                        onClick: handleRefresh,
+                        title: 'Refresh current page',
+                        disabled: !activeTabData?.url
+                    }, '↻')
+                ),
+                
+                // 仅在全屏模式下显示内联 tabs
+                isFullscreen && !isMobile && renderTabsInline(),
+                
+                h('div', { className: 'qp-header-right' },
+                    // 全屏模式下显示三列切换按钮
+                    isFullscreen && !isMobile && h('button', {
+                        className: 'qp-multi-col-btn',
+                        onClick: toggleMultiColumn,
+                        title: isMultiColumn ? 'Switch to single column' : 'Switch to 3 columns',
+                        style: {
+                            background: isMultiColumn ? 'var(--text)' : 'none',
+                            color: isMultiColumn ? 'var(--bg)' : 'var(--text)',
+                            border: '1px solid var(--text)',
+                            borderRadius: '4px',
+                            padding: '2px 8px',
+                            fontSize: '12px',
+                            cursor: 'pointer',
+                            opacity: isMultiColumn ? 1 : 0.6,
+                            transition: 'all 0.2s'
+                        }
+                    }, isMultiColumn ? '▦' : '▢'),
+                    isFullscreen && !isMobile && h('span', { 
+                        style: { fontSize: '12px', opacity: 0.4, marginRight: '4px' }
+                    }, '|'),
+                    h('button', { 
+                        className: 'qp-close-btn', 
+                        onClick: handleClose,
+                        style: { fontSize: '20px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text)', padding: '0 4px' }
+                    }, '×')
+                )
             ),
             
-            h('div', { className: 'qp-content' },
-                activeTabData && activeTabData.url ? 
-                    h('iframe', {
-                        ref: iframeRef,
-                        src: activeTabData.url,
-                        className: 'qp-iframe',
-                        sandbox: 'allow-scripts allow-same-origin allow-forms allow-popups',
-                        title: getTabDisplayName(activeTab)
-                    }) :
-                    h('div', { className: 'qp-empty' }, 
-                        activeTabData ? 
-                            'No URL configured for this tab. Add a URL in the admin panel.' :
-                            'No tabs configured. Add tabs in the admin panel.'
+            // 独立的 tabs 行（非全屏模式显示）
+            // 移动端始终显示独立 tabs 行
+            (!isFullscreen || isMobile) && renderTabsStandalone(),
+            
+            // 内容区域
+            h('div', { 
+                className: `qp-content ${isMultiColumn && isFullscreen ? 'qp-content-multi' : ''}`,
+                style: isFullscreen ? { flex: 1, overflow: 'hidden' } : {}
+            },
+                isMultiColumn && isFullscreen && !isMobile ? 
+                    // 三列模式
+                    h('div', { 
+                        className: 'qp-multi-grid',
+                        ref: fullscreenGridRef,
+                        style: {
+                            display: 'grid',
+                            gridTemplateColumns: 'repeat(3, 1fr)',
+                            gap: '4px',
+                            flex: 1,
+                            height: '100%',
+                            padding: '4px'
+                        }
+                    },
+                        multiColumns.map((tab, colIdx) => {
+                            const isActive = tab.name === activeTab;
+                            const tabData = isActive 
+                                ? { url: tab.url }
+                                : (otherTabData[tab.name] || { url: tab.url, loaded: false });
+                            
+                            return h('div', { 
+                                className: `qp-multi-column ${isActive ? 'qp-multi-column-active' : ''}`,
+                                key: tab.name,
+                                style: {
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    overflow: 'hidden',
+                                    borderRadius: '6px',
+                                    border: isActive ? '2px solid var(--text)' : '1px solid var(--faint-contrast)',
+                                    background: 'var(--bg)'
+                                }
+                            },
+                                h('div', {
+                                    className: 'qp-multi-column-header',
+                                    style: {
+                                        padding: '4px 8px',
+                                        borderBottom: '1px solid var(--faint-contrast)',
+                                        fontSize: '12px',
+                                        fontWeight: isActive ? 'bold' : 'normal',
+                                        color: 'var(--text)',
+                                        background: isActive ? 'var(--ghost-contrast)' : 'transparent',
+                                        flexShrink: 0,
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        alignItems: 'center'
+                                    }
+                                },
+                                    h('span', {}, getTabDisplayName(tab.name)),
+                                    !isActive && h('span', { 
+                                        style: { fontSize: '10px', opacity: 0.5 }
+                                    }, 'view only')
+                                ),
+                                h('div', {
+                                    className: 'qp-multi-column-content',
+                                    style: {
+                                        flex: 1,
+                                        overflow: 'hidden',
+                                        position: 'relative'
+                                    }
+                                },
+                                    isActive ? 
+                                        (tabData.url ? 
+                                            h('iframe', {
+                                                ref: isActive ? iframeRef : undefined,
+                                                src: tabData.url,
+                                                className: 'qp-iframe',
+                                                sandbox: 'allow-scripts allow-same-origin allow-forms allow-popups',
+                                                title: getTabDisplayName(tab.name),
+                                                style: { width: '100%', height: '100%', border: 'none' }
+                                            }) :
+                                            h('div', { className: 'qp-empty', style: { padding: '10px', fontSize: '12px' } }, 
+                                                'No URL configured'
+                                            )
+                                        ) :
+                                        (tabData.url ? 
+                                            h('iframe', {
+                                                src: tabData.url,
+                                                className: 'qp-iframe',
+                                                sandbox: 'allow-scripts allow-same-origin allow-forms allow-popups',
+                                                title: getTabDisplayName(tab.name),
+                                                style: { width: '100%', height: '100%', border: 'none', opacity: 0.7 }
+                                            }) :
+                                            h('div', { className: 'qp-empty', style: { padding: '10px', fontSize: '12px' } }, 
+                                                'No URL'
+                                            )
+                                        )
+                                )
+                            );
+                        })
+                    )
+                    :
+                    // 单列模式
+                    (activeTabData && activeTabData.url ? 
+                        h('iframe', {
+                            ref: iframeRef,
+                            src: activeTabData.url,
+                            className: 'qp-iframe',
+                            sandbox: 'allow-scripts allow-same-origin allow-forms allow-popups',
+                            title: getTabDisplayName(activeTab),
+                            style: { width: '100%', height: '100%', border: 'none' }
+                        }) :
+                        h('div', { className: 'qp-empty' }, 
+                            activeTabData ? 
+                                'No URL configured for this tab. Add a URL in the admin panel.' :
+                                'No tabs configured. Add tabs in the admin panel.'
+                        )
                     )
             )
         );
