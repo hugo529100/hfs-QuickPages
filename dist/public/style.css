@@ -325,24 +325,6 @@
     border-radius: 0.4em 0.4em 0 0;
 }
 
-/* 全屏模式下隐藏独立的 tabs 容器（桌面端） */
-.qp-fullscreen .qp-tabs-container {
-    display: none !important;
-}
-
-/* 非全屏桌面模式下：显示独立 tabs，隐藏内联 tabs */
-@media (min-width: 769px) {
-    .qp-panel:not(.qp-fullscreen) .qp-tabs-inline {
-        display: none !important;
-    }
-}
-
-/* 移动端：始终显示独立 tabs，隐藏内联 tabs */
-@media (max-width: 768px) {
-    .qp-tabs-inline {
-        display: none !important;
-    }
-}
 
 .menu-bar-qp-btn {
     cursor: pointer;
@@ -422,8 +404,10 @@
 }
 
 /* 全屏模式下隐藏独立的 tabs 容器（桌面端） */
-.qp-fullscreen .qp-tabs-container {
-    display: none !important;
+@media (min-width: 769px) {
+    .qp-fullscreen .qp-tabs-container {
+        display: none !important;
+    }
 }
 
 /* 非全屏桌面模式下：显示独立 tabs，隐藏内联 tabs */

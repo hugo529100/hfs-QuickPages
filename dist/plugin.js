@@ -1,4 +1,4 @@
-exports.version = 2.1
+exports.version = 2.2
 exports.description = "A quick-access panel for HFS that lets users switch between multiple web pages via custom tabs."
 exports.repo = "Hug3O/QuickPages"
 exports.apiRequired = 8.87
@@ -10,9 +10,17 @@ exports.config = {
         label: 'Tab List',
         fields: {
             name: { label: 'Tab Name' },
-            url: { label: 'URL', helperText: 'The webpage address to load in this tab' }
+            url: { label: 'URL', helperText: 'The webpage address to load in this tab' },
+            // ====== 新增：公开访问配置 ======
+            publicPage: {
+                type: 'boolean',
+                label: 'Allow public access (Guest)',
+                defaultValue: false,
+                helperText: 'When enabled, unauthenticated users (Guest) can view this page.'
+            }
+            // ====== 新增结束 ======
         },
-        defaultValue: [{ name: 'General', url: '' }],
+        defaultValue: [{ name: 'General', url: '', publicPage: false }],
         helperText: 'Add or remove tabs. Each tab can load a different webpage.',
         frontend: true
     },
@@ -41,12 +49,30 @@ exports.init = async api => {
     
     const API_BASE = `${api.Const.API_URI}quickpages/`
 
+    // ====== 新增：获取公开页面列表 ======
+    function getPublicPages() {
+        const list = api.getConfig('tabList') || [{ name: 'General', url: '', publicPage: false }]
+        return list.filter(t => t.publicPage === true).map(t => t.name).filter(Boolean)
+    }
+    // ====== 新增结束 ======
+
     function isAllowed(username) {
-        if (!username) return false
+        if (!username) {
+            // 访客只能访问公开页面
+            const publicPages = getPublicPages()
+            return publicPages.length > 0
+        }
+        if (username === 'admin') return true
         if (!api.getConfig('restrictUsers')) return true
         const allowed = api.getConfig('allowedUsers') || []
         return allowed.includes(username)
     }
+
+    // ====== 新增：检查是否有公开页面 ======
+    function hasPublicPages() {
+        return getPublicPages().length > 0
+    }
+    // ====== 新增结束 ======
 
     function getTabs() {
         const list = api.getConfig('tabList') || [{ name: 'General', url: '' }]
@@ -98,23 +124,39 @@ exports.init = async api => {
 
     async function getTabInfo(ctx) {
         const username = getCurrentUsername(ctx)
-        if (!isAllowed(username)) { ctx.status = 403; return }
-        
         const tabsData = await getTabsData()
         const tabs = getTabs()
         const order = tabsData.order.length > 0 ? tabsData.order : tabs.map(t => t.name)
-        const orderedTabs = order.map(name => tabs.find(t => t.name === name)).filter(Boolean)
+        let orderedTabs = order.map(name => tabs.find(t => t.name === name)).filter(Boolean)
+        
+        // ====== 修改：访客只返回公开页面 ======
+        if (!username) {
+            const publicPages = getPublicPages()
+            orderedTabs = orderedTabs.filter(t => publicPages.includes(t.name))
+        }
+        // ====== 修改结束 ======
+        
+        // ====== 修改：权限检查 ======
+        if (username && !isAllowed(username)) {
+            ctx.status = 403
+            return
+        }
+        // ====== 修改结束 ======
         
         ctx.body = { 
             tabs: orderedTabs,
-            tabNames: tabsData.names
+            tabNames: tabsData.names,
+            // ====== 新增：返回公开页面列表和访客状态 ======
+            publicTabs: getPublicPages(),
+            isGuest: !username
+            // ====== 新增结束 ======
         }
         ctx.status = 200
     }
 
     async function renameTab(ctx) {
         const username = getCurrentUsername(ctx)
-        if (!isAllowed(username)) { ctx.status = 403; return }
+        if (!username || !isAllowed(username)) { ctx.status = 403; return }
         
         let body = ctx.state.params || ctx.request?.body || {}
         const { tab, newName } = body
@@ -138,7 +180,7 @@ exports.init = async api => {
 
     async function reorderTabs(ctx) {
         const username = getCurrentUsername(ctx)
-        if (!isAllowed(username)) { ctx.status = 403; return }
+        if (!username || !isAllowed(username)) { ctx.status = 403; return }
         
         let body = ctx.state.params || ctx.request?.body || {}
         const { tabs: newOrder } = body
@@ -153,11 +195,19 @@ exports.init = async api => {
         ctx.status = 200
     }
 
+    // ====== 新增：检查访问权限接口 ======
     async function checkAccess(ctx) {
         const username = getCurrentUsername(ctx)
-        ctx.body = { allowed: isAllowed(username) }
+        const publicPages = getPublicPages()
+        
+        ctx.body = { 
+            allowed: !!username || publicPages.length > 0,
+            isGuest: !username,
+            publicTabs: publicPages
+        }
         ctx.status = 200
     }
+    // ====== 新增结束 ======
     
     return {
         async middleware(ctx) {
@@ -166,7 +216,9 @@ exports.init = async api => {
             
             const method = ctx.method.toUpperCase()
             
+            // ====== 新增：check 接口 ======
             if (p === `${API_BASE}check` && method === 'GET') { await checkAccess(ctx); return }
+            // ====== 新增结束 ======
             if (p === `${API_BASE}tabs` && method === 'GET') { await getTabInfo(ctx); return }
             if (p === `${API_BASE}reorder-tabs` && method === 'POST') { await reorderTabs(ctx); return }
             if (p === `${API_BASE}rename-tab` && method === 'POST') { await renameTab(ctx); return }

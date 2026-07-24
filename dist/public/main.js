@@ -2,7 +2,28 @@
     const { h } = HFS;
     const { useState, useEffect, useRef, useMemo, useCallback } = HFS.React;
 
-    function QuickPagePanel({ onClose }) {
+    // ====== 访客访问控制 ======
+    async function checkAccess() {
+        try {
+            const res = await fetch('/~/api/quickpages/check');
+            const data = await res.json();
+            return {
+                allowed: data.allowed || false,
+                isGuest: data.isGuest || false,
+                publicTabs: data.publicTabs || []
+            };
+        } catch {
+            // 如果接口不存在，默认允许访问（兼容旧版本）
+            return {
+                allowed: true,
+                isGuest: false,
+                publicTabs: []
+            };
+        }
+    }
+    // ====== 访客访问控制结束 ======
+
+    function QuickPagePanel({ onClose, publicTabs: propPublicTabs = [], isGuest: propIsGuest = false }) {
         const [tabs, setTabs] = useState([]);
         const [activeTab, setActiveTab] = useState('');
         const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
@@ -21,6 +42,11 @@
         const panelRef = useRef(null);
         const isFullscreenRef = useRef(false);
         const fullscreenGridRef = useRef(null);
+        
+        // ====== 使用传入的访客状态 ======
+        const isGuest = propIsGuest;
+        const publicTabs = propPublicTabs;
+        // ====== 访客状态结束 ======
         
         useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
         useEffect(() => { isFullscreenRef.current = isFullscreen; }, [isFullscreen]);
@@ -234,12 +260,25 @@
         };
 
         const handleRenameStart = (tab) => {
+            // ====== 访客不允许重命名 ======
+            if (isGuest) {
+                HFS.toast?.('Please login to rename tabs', 'info');
+                return;
+            }
+            // ====== 访客限制结束 ======
             setRenamingTab(tab);
             setRenameValue(tabNames[tab] || '');
         };
 
         const handleRenameSave = async () => {
             if (!renamingTab) return;
+            // ====== 访客不允许重命名 ======
+            if (isGuest) {
+                HFS.toast?.('Please login to rename tabs', 'info');
+                setRenamingTab(null);
+                return;
+            }
+            // ====== 访客限制结束 ======
             const newName = renameValue.trim();
             try {
                 await fetch('/~/api/quickpages/rename-tab', {
@@ -289,26 +328,32 @@
             fetch('/~/api/quickpages/tabs')
                 .then(r => r.json())
                 .then(data => {
-                    setTabs(data.tabs || []);
+                    // ====== 访客过滤 tabs ======
+                    let availableTabs = data.tabs || [];
+                    if (isGuest && publicTabs.length > 0) {
+                        availableTabs = availableTabs.filter(t => publicTabs.includes(t.name));
+                    }
+                    // ====== 访客过滤结束 ======
+                    setTabs(availableTabs);
                     setTabNames(data.tabNames || {});
                     
                     const savedTab = localStorage.getItem('quickpages-active-tab');
-                    const availableTabNames = (data.tabs || []).map(t => t.name);
+                    const availableTabNames = availableTabs.map(t => t.name);
                     
                     if (savedTab && availableTabNames.includes(savedTab)) {
                         setActiveTab(savedTab);
-                    } else if (data.tabs?.length > 0 && !activeTabRef.current) {
-                        setActiveTab(data.tabs[0].name);
-                    } else if (data.tabs?.length > 0 && !data.tabs.find(t => t.name === activeTabRef.current)) {
-                        setActiveTab(data.tabs[0].name);
+                    } else if (availableTabs.length > 0 && !activeTabRef.current) {
+                        setActiveTab(availableTabs[0].name);
+                    } else if (availableTabs.length > 0 && !availableTabs.find(t => t.name === activeTabRef.current)) {
+                        setActiveTab(availableTabs[0].name);
                     }
                 })
                 .catch(e => console.error('load tabs:', e));
-        }, []);
+        }, [isGuest, publicTabs]);
 
         useEffect(() => {
             loadTabs();
-        }, []);
+        }, [loadTabs]);
 
         useEffect(() => {
             try {
@@ -318,12 +363,17 @@
                     if (e === 'tabsReordered') {
                         if (data.tabs && Array.isArray(data.tabs)) {
                             const currentTabs = tabs;
-                            const orderedTabs = data.tabs.map(name => 
+                            // ====== 访客过滤 ======
+                            let orderedTabs = data.tabs.map(name => 
                                 currentTabs.find(t => t.name === name) || { name, url: '' }
                             ).filter(Boolean);
+                            if (isGuest && publicTabs.length > 0) {
+                                orderedTabs = orderedTabs.filter(t => publicTabs.includes(t.name));
+                            }
+                            // ====== 访客过滤结束 ======
                             setTabs(orderedTabs);
-                            if (!data.tabs.includes(activeTabRef.current)) {
-                                setActiveTab(data.tabs[0] || '');
+                            if (!orderedTabs.some(t => t.name === activeTabRef.current)) {
+                                setActiveTab(orderedTabs[0]?.name || '');
                             }
                         }
                         return;
@@ -346,13 +396,19 @@
             } catch (e) {
                 console.error('Failed to setup notifications:', e);
             }
-        }, []);
+        }, [tabs, isGuest, publicTabs]);
 
         const activeTabData = useMemo(() => {
             return tabs.find(t => t.name === activeTab) || null;
         }, [tabs, activeTab]);
 
         const moveTab = (tab, direction) => {
+            // ====== 访客不允许移动 tab ======
+            if (isGuest) {
+                HFS.toast?.('Please login to reorder tabs', 'info');
+                return;
+            }
+            // ====== 访客限制结束 ======
             const idx = tabs.findIndex(t => t.name === tab);
             if (idx === -1) return;
             
@@ -420,7 +476,6 @@
                             onClick: () => {
                                 setActiveTab(tab.name);
                                 if (isMultiColumn) {
-                                    // 切换时重新加载其他列
                                     const otherTabs = tabs.filter(t => t.name !== tab.name);
                                     otherTabs.forEach(t => loadOtherTabNotes(t));
                                 }
@@ -428,9 +483,15 @@
                             onDoubleClick: (e) => {
                                 e.preventDefault();
                                 e.stopPropagation();
-                                handleRenameStart(tab.name);
+                                // ====== 访客不允许重命名 ======
+                                if (!isGuest) {
+                                    handleRenameStart(tab.name);
+                                } else {
+                                    HFS.toast?.('Please login to rename tabs', 'info');
+                                }
+                                // ====== 访客限制结束 ======
                             },
-                            title: 'Double-click to rename',
+                            title: isGuest ? 'Login to rename' : 'Double-click to rename',
                             style: {
                                 padding: '4px 8px',
                                 fontSize: '14px',
@@ -470,14 +531,21 @@
                                 onDoubleClick: (e) => {
                                     e.preventDefault();
                                     e.stopPropagation();
-                                    handleRenameStart(tab.name);
+                                    // ====== 访客不允许重命名 ======
+                                    if (!isGuest) {
+                                        handleRenameStart(tab.name);
+                                    } else {
+                                        HFS.toast?.('Please login to rename tabs', 'info');
+                                    }
+                                    // ====== 访客限制结束 ======
                                 },
-                                title: 'Double-click to rename'
+                                title: isGuest ? 'Login to rename' : 'Double-click to rename'
                             }, getTabDisplayName(tab.name))
                         )
                     )
                 ),
-                h('div', { className: 'qp-tab-sort' },
+                // ====== 访客隐藏排序按钮 ======
+                !isGuest && h('div', { className: 'qp-tab-sort' },
                     h('button', {
                         className: 'qp-sort-btn',
                         onClick: () => moveTab(activeTab, 'left'),
@@ -491,8 +559,55 @@
                         title: 'Move right'
                     }, '▶')
                 )
+                // ====== 访客隐藏结束 ======
             );
         };
+
+        // ====== 如果 tabs 为空，显示提示 ======
+        if (tabs.length === 0) {
+            return h('div', { 
+                className: `qp-panel ${isMobile ? 'qp-mobile' : 'qp-desktop'} ${closing ? 'qp-closing' : ''} ${isFullscreen ? 'qp-fullscreen' : ''}`,
+                ref: panelRef,
+                style: isFullscreen ? {
+                    width: '100%',
+                    maxWidth: '100%',
+                    height: '100vh',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    borderLeft: 'none',
+                    borderRadius: 0,
+                    zIndex: 9999
+                } : {}
+            },
+                h('div', { 
+                    className: 'qp-panel-header', 
+                    ref: headerRef,
+                    style: isFullscreen ? { borderBottom: '1px solid var(--faint-contrast)', padding: '4px 8px', flexShrink: 0 } : {}
+                },
+                    h('div', { className: 'qp-header-left', style: { flexShrink: 0 } },
+                        h('span', { 
+                            className: 'qp-panel-title',
+                            onClick: toggleFullscreen,
+                            style: { cursor: 'pointer' }
+                        }, isFullscreen ? '※ Pages ✦' : '※ Pages')
+                    ),
+                    h('div', { className: 'qp-header-right' },
+                        h('button', { 
+                            className: 'qp-close-btn', 
+                            onClick: handleClose,
+                            style: { fontSize: '20px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text)', padding: '0 4px' }
+                        }, '×')
+                    )
+                ),
+                h('div', { className: 'qp-content', style: isFullscreen ? { flex: 1, overflow: 'hidden' } : {} },
+                    h('div', { className: 'qp-empty' }, 
+                        isGuest ? 'No public pages available. Please login to access more.' : 'No tabs configured. Add tabs in the admin panel.'
+                    )
+                )
+            );
+        }
+        // ====== tabs 为空提示结束 ======
 
         return h('div', { 
             className: `qp-panel ${isMobile ? 'qp-mobile' : 'qp-desktop'} ${closing ? 'qp-closing' : ''} ${isFullscreen ? 'qp-fullscreen' : ''}`,
@@ -658,7 +773,7 @@
                                                 className: 'qp-iframe',
                                                 sandbox: 'allow-scripts allow-same-origin allow-forms allow-popups',
                                                 title: getTabDisplayName(tab.name),
-                                                style: { width: '100%', height: '100%', border: 'none', opacity: 0.7 }
+                                                style: { width: '100%', height: '100%', border: 'none', opacity: 1.0 }
                                             }) :
                                             h('div', { className: 'qp-empty', style: { padding: '10px', fontSize: '12px' } }, 
                                                 'No URL'
@@ -692,6 +807,19 @@
     function QuickPageApp() {
         const { username } = HFS.useSnapState();
         const [show, setShow] = useState(false);
+        const [hasAccess, setHasAccess] = useState(false);
+        const [publicTabs, setPublicTabs] = useState([]);
+        const [isGuest, setIsGuest] = useState(false);
+
+        // ====== 检查访问权限 ======
+        useEffect(() => {
+            checkAccess().then(result => {
+                setHasAccess(result.allowed);
+                setPublicTabs(result.publicTabs || []);
+                setIsGuest(result.isGuest || false);
+            });
+        }, []);
+        // ====== 访问权限检查结束 ======
 
         useEffect(() => {
             const fn = () => setShow(prev => !prev);
@@ -699,25 +827,31 @@
             return () => window.removeEventListener('toggle-quickpages', fn);
         }, []);
 
-        if (!username || !show) return null;
+        // ====== 显示条件：有访问权限且 show 为 true ======
+        if (!hasAccess || !show) return null;
+        // ====== 显示条件结束 ======
 
         return h('div', {
             className: 'qp-overlay'
-        }, h(QuickPagePanel, { onClose: () => setShow(false) }));
+        }, h(QuickPagePanel, { 
+            onClose: () => setShow(false),
+            publicTabs: publicTabs,
+            isGuest: isGuest
+        }));
     }
 
-    if (HFS.state.username) {
-        HFS.onEvent('appendMenuBar', () => {
-            return h('button', {
-                className: 'menu-bar-qp-btn',
-                onClick() { window.dispatchEvent(new CustomEvent('toggle-quickpages')) },
-                title: 'Open Quick Pages'
-            }, [
-                h('span', { 'aria-hidden': 'true' }, '◳'),
-                h('span', { className: 'btn-label' }, 'Pages')
-            ]);
-        });
-    }
+    // ====== 按钮始终显示，不受登录状态影响 ======
+    HFS.onEvent('appendMenuBar', () => {
+        return h('button', {
+            className: 'menu-bar-qp-btn',
+            onClick() { window.dispatchEvent(new CustomEvent('toggle-quickpages')) },
+            title: 'Open Quick Pages'
+        }, [
+            h('span', { 'aria-hidden': 'true' }, '◳'),
+            h('span', { className: 'btn-label' }, 'Pages')
+        ]);
+    });
+    // ====== 按钮始终显示结束 ======
 
     HFS.onEvent('footer', () => h(QuickPageApp));
 }
