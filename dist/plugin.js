@@ -1,4 +1,4 @@
-exports.version = 2.2
+exports.version = 2.3
 exports.description = "A quick-access panel for HFS that lets users switch between multiple web pages via custom tabs."
 exports.repo = "Hug3O/QuickPages"
 exports.apiRequired = 8.87

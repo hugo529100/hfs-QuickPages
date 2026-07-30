@@ -51,39 +51,6 @@
         useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
         useEffect(() => { isFullscreenRef.current = isFullscreen; }, [isFullscreen]);
         
-        // 处理点击空白区域关闭（非全屏模式）
-        useEffect(() => {
-            const handleClickOutside = (e) => {
-                if (!panelRef.current || isMobile || isFullscreenRef.current) return;
-                
-                const panel = panelRef.current;
-                const panelRect = panel.getBoundingClientRect();
-                
-                const expandedRect = {
-                    left: panelRect.left - 30,
-                    right: panelRect.right + 30,
-                    top: panelRect.top - 30,
-                    bottom: panelRect.bottom + 30
-                };
-                
-                if (e.clientX < expandedRect.left || 
-                    e.clientX > expandedRect.right || 
-                    e.clientY < expandedRect.top || 
-                    e.clientY > expandedRect.bottom) {
-                    handleClose();
-                }
-            };
-            
-            const timer = setTimeout(() => {
-                document.addEventListener('mousedown', handleClickOutside);
-            }, 100);
-            
-            return () => {
-                clearTimeout(timer);
-                document.removeEventListener('mousedown', handleClickOutside);
-            };
-        }, [isMobile, onClose]);
-        
         // 保存 activeTab 到 localStorage
         useEffect(() => {
             if (activeTab) {
@@ -108,8 +75,14 @@
             return () => window.removeEventListener('resize', handleResize);
         }, []);
 
-        // 全屏模式切换
+        // ====== 全屏模式切换 - 手机禁用 ======
         const toggleFullscreen = useCallback(() => {
+            // 手机浏览器禁用全屏
+            if (isMobile) {
+                HFS.toast?.('Fullscreen mode not available on mobile', 'info');
+                return;
+            }
+
             const el = document.documentElement;
             
             if (!isFullscreenRef.current) {
@@ -126,8 +99,11 @@
                 setIsMultiColumn(false);
                 setOtherTabData({});
                 setFullscreenLoadState({});
+                // 恢复 body 滚动
+                document.body.style.overflow = '';
             }
-        }, []);
+        }, [isMobile]);
+        // ====== 全屏切换结束 ======
 
         // 监听全屏变化事件
         useEffect(() => {
@@ -138,6 +114,7 @@
                     setIsMultiColumn(false);
                     setOtherTabData({});
                     setFullscreenLoadState({});
+                    document.body.style.overflow = '';
                 }
             };
             document.addEventListener('fullscreenchange', handleFullscreenChange);
@@ -250,6 +227,8 @@
             if (isFullscreenRef.current) {
                 document.exitFullscreen?.().catch(() => {});
             }
+            // 恢复 body 滚动
+            document.body.style.overflow = '';
             setTimeout(onClose, 300);
         };
 
@@ -305,6 +284,7 @@
             }
         };
 
+        // body 滚动控制
         useEffect(() => {
             const originalOverflow = document.body.style.overflow;
             if (!isFullscreenRef.current) {
@@ -315,7 +295,6 @@
             };
         }, []);
 
-        // 全屏模式下 body 滚动控制
         useEffect(() => {
             if (isFullscreen) {
                 document.body.style.overflow = '';
@@ -589,7 +568,8 @@
                         h('span', { 
                             className: 'qp-panel-title',
                             onClick: toggleFullscreen,
-                            style: { cursor: 'pointer' }
+                            style: { cursor: isMobile ? 'default' : 'pointer' },
+                            title: isFullscreen ? 'Click to exit fullscreen' : (isMobile ? 'Fullscreen not available on mobile' : 'Click to enter fullscreen')
                         }, isFullscreen ? '※ Pages ✦' : '※ Pages')
                     ),
                     h('div', { className: 'qp-header-right' },
@@ -641,8 +621,8 @@
                     h('span', { 
                         className: 'qp-panel-title',
                         onClick: toggleFullscreen,
-                        style: { cursor: 'pointer' },
-                        title: isFullscreen ? 'Click to exit fullscreen' : 'Click to enter fullscreen'
+                        style: { cursor: isMobile ? 'default' : 'pointer' },
+                        title: isFullscreen ? 'Click to exit fullscreen' : (isMobile ? 'Fullscreen not available on mobile' : 'Click to enter fullscreen')
                     }, isFullscreen ? '※ Pages ✦' : '※ Pages'),
                     h('button', {
                         className: 'qp-refresh-btn',
@@ -804,41 +784,140 @@
         );
     }
 
-    function QuickPageApp() {
-        const { username } = HFS.useSnapState();
-        const [show, setShow] = useState(false);
-        const [hasAccess, setHasAccess] = useState(false);
-        const [publicTabs, setPublicTabs] = useState([]);
-        const [isGuest, setIsGuest] = useState(false);
+    // ====== QuickPageApp - 在框架外渲染 ======
+    // ====== QuickPageApp - 在框架外渲染 ======
+function QuickPageApp() {
+    const { username } = HFS.useSnapState();
+    const [show, setShow] = useState(false);
+    const [hasAccess, setHasAccess] = useState(false);
+    const [publicTabs, setPublicTabs] = useState([]);
+    const [isGuest, setIsGuest] = useState(false);
+    const mountRef = useRef(null);
 
-        // ====== 检查访问权限 ======
-        useEffect(() => {
-            checkAccess().then(result => {
-                setHasAccess(result.allowed);
-                setPublicTabs(result.publicTabs || []);
-                setIsGuest(result.isGuest || false);
+    // ====== 检查访问权限 ======
+    useEffect(() => {
+        checkAccess().then(result => {
+            setHasAccess(result.allowed);
+            setPublicTabs(result.publicTabs || []);
+            setIsGuest(result.isGuest || false);
+        });
+    }, []);
+    // ====== 访问权限检查结束 ======
+
+    useEffect(() => {
+        const fn = () => setShow(prev => !prev);
+        window.addEventListener('toggle-quickpages', fn);
+        return () => window.removeEventListener('toggle-quickpages', fn);
+    }, []);
+
+    // ====== 使用 createElement 在框架外渲染 ======
+    useEffect(() => {
+        // 清理之前的挂载点
+        if (mountRef.current) {
+            if (mountRef.current.parentNode) {
+                document.body.removeChild(mountRef.current);
+            }
+            mountRef.current = null;
+        }
+
+        if (!hasAccess || !show) return;
+
+        // 创建容器 - 全屏透明覆盖层，用于捕获点击关闭
+        const container = document.createElement('div');
+        container.style.cssText = `
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 100% !important;
+            height: 100% !important;
+            z-index: 10 !important;
+            pointer-events: none !important;
+            overflow: hidden !important;
+            touch-action: none !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            background: transparent !important;
+        `;
+        document.body.appendChild(container);
+        mountRef.current = container;
+
+        try {
+            const element = h(QuickPagePanel, { 
+                onClose: () => setShow(false),
+                publicTabs: publicTabs,
+                isGuest: isGuest
             });
-        }, []);
-        // ====== 访问权限检查结束 ======
 
-        useEffect(() => {
-            const fn = () => setShow(prev => !prev);
-            window.addEventListener('toggle-quickpages', fn);
-            return () => window.removeEventListener('toggle-quickpages', fn);
-        }, []);
+            if (HFS.ReactDOM && HFS.ReactDOM.render) {
+                HFS.ReactDOM.render(element, container);
+                console.log('QuickPages: Rendered with ReactDOM.render');
+            } else if (HFS.React && HFS.React.render) {
+                HFS.React.render(element, container);
+                console.log('QuickPages: Rendered with React.render');
+            } else {
+                renderFallbackUI(container);
+            }
+        } catch (e) {
+            console.error('QuickPages: Render error:', e);
+            renderFallbackUI(container);
+        }
 
-        // ====== 显示条件：有访问权限且 show 为 true ======
-        if (!hasAccess || !show) return null;
-        // ====== 显示条件结束 ======
+        function renderFallbackUI(container) {
+            const panel = document.createElement('div');
+            panel.style.cssText = `
+                position: fixed !important;
+                top: 0 !important;
+                right: 0 !important;
+                width: 480px !important;
+                max-width: 92vw !important;
+                height: 100vh !important;
+                background: #1a1a1a !important;
+                color: #ccc !important;
+                z-index: 10 !important;
+                pointer-events: auto !important;
+                padding: 20px !important;
+                box-sizing: border-box !important;
+                display: flex !important;
+                flex-direction: column !important;
+                box-shadow: -8px 0 40px rgba(0,0,0,0.5) !important;
+            `;
 
-        return h('div', {
-            className: 'qp-overlay'
-        }, h(QuickPagePanel, { 
-            onClose: () => setShow(false),
-            publicTabs: publicTabs,
-            isGuest: isGuest
-        }));
-    }
+            panel.innerHTML = `
+                <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #333;padding-bottom:10px;margin-bottom:10px;">
+                    <h2 style="margin:0;color:#fff;">Quick Pages</h2>
+                    <button onclick="this.closest('.qp-overlay').remove()" style="background:none;border:none;color:#fff;font-size:24px;cursor:pointer;">\u00D7</button>
+                </div>
+                <div style="flex:1;overflow-y:auto;">
+                    <p style="color:#666;text-align:center;padding-top:40px;">
+                        ⚠️ React render failed.<br>
+                        <span style="font-size:0.85em;">Please check browser console for errors.</span>
+                    </p>
+                </div>
+            `;
+
+            container.style.pointerEvents = 'none';
+            panel.style.pointerEvents = 'auto';
+            container.appendChild(panel);
+
+            container.addEventListener('click', function(e) {
+                if (e.target === container) {
+                    setShow(false);
+                }
+            });
+        }
+
+        return () => {
+            if (mountRef.current && mountRef.current.parentNode) {
+                document.body.removeChild(mountRef.current);
+            }
+            mountRef.current = null;
+        };
+    }, [hasAccess, show, publicTabs, isGuest]);
+    // ====== 框架外渲染结束 ======
+
+    // ====== 不再返回 UI，由 useEffect 管理 ======
+    return null;
+}
 
     // ====== 按钮始终显示，不受登录状态影响 ======
     HFS.onEvent('appendMenuBar', () => {

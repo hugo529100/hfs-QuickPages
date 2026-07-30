@@ -1,63 +1,93 @@
-.qp-overlay {
-    position: fixed;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
-    z-index: 1000;
-    display: flex;
-    align-items: flex-end;
-    justify-content: flex-end;
+/* ============================================
+   Quick Pages 插件样式
+   ============================================ */
+
+/* 面板容器 - 由 JS 创建，样式内联 */
+.qp-panel {
+    pointer-events: auto !important;
+    display: flex !important;
+    flex-direction: column !important;
+    background: var(--bg) !important;
+    height: 100% !important;
+    width: 100% !important;
+    position: relative !important;
 }
 
-.qp-panel.qp-mobile {
-    position: fixed;
-    bottom: 0; left: 0; right: 0;
-    height: 100%;
-    background: var(--bg);
-    border-radius: 4px;
-    display: flex;
-    flex-direction: column;
-    animation: qpSlideUp 0.5s ease-out;
-    border: 1px solid var(--text);
-    border-bottom: none;
-    backdrop-filter: blur(4px);
-}
-
-.qp-panel.qp-mobile.qp-closing {
-    animation: qpSlideDown 0.5s ease-in forwards;
-}
-
+/* 桌面端面板 - 固定定位从右侧滑出 */
 .qp-panel.qp-desktop {
-    position: fixed;
-    top: 0; right: 0;
-    height: 100vh;
-    width: 450px;
-    max-width: 90vw;
-    background: var(--bg);
-    display: flex;
-    flex-direction: column;
-    animation: qpSlideRight 0.5s ease-out;
-    border-left: 1px solid var(--text);
-    backdrop-filter: blur(4px);
+    position: fixed !important;
+    top: 0 !important;
+    right: 0 !important;
+    height: 100vh !important;
+    width: 450px !important;
+    max-width: 90vw !important;
+    border-left: 1px solid var(--text) !important;
+    backdrop-filter: blur(4px) !important;
+    animation: qpSlideRight 0.5s ease-out !important;
+    /*box-shadow: -8px 0 40px rgba(0, 0, 0, 0.5) !important;*/
+    z-index: 10 !important;
 }
 
 .qp-panel.qp-desktop.qp-closing {
-    animation: qpSlideLeft 0.5s ease-in forwards;
+    animation: qpSlideLeft 0.5s ease-in forwards !important;
 }
 
-/* 全屏模式 */
+/* 移动端面板 - 从底部滑出 */
+.qp-panel.qp-mobile {
+    position: fixed !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    height: 99.6% !important;
+    border-radius: 6px 6px 0 0 !important;
+    border: 1px solid var(--text) !important;
+    border-bottom: none !important;
+    backdrop-filter: blur(4px) !important;
+    animation: qpSlideUp 0.5s ease-out !important;
+    /*box-shadow: 0 -8px 40px rgba(0, 0, 0, 0.5) !important;*/
+    z-index: 10 !important;
+}
+
+.qp-panel.qp-mobile.qp-closing {
+    animation: qpSlideDown 0.5s ease-in forwards !important;
+}
+
+/* 全屏模式 - 覆盖整个屏幕 */
 .qp-panel.qp-fullscreen {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    width: 100vw;
-    height: 100vh;
-    max-width: 100vw;
-    border-left: none;
-    border-radius: 0;
-    z-index: 9999;
-    background: var(--bg);
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    max-width: 100vw !important;
+    border-left: none !important;
+    border-radius: 0 !important;
+    animation: none !important;
+    box-shadow: none !important;
+    z-index: 10 !important;
+}
+
+/* 全屏模式下隐藏独立的 tabs 容器（桌面端） */
+@media (min-width: 769px) {
+    .qp-fullscreen .qp-tabs-container {
+        display: none !important;
+    }
+}
+
+/* 非全屏桌面模式下：显示独立 tabs，隐藏内联 tabs */
+@media (min-width: 769px) {
+    .qp-panel:not(.qp-fullscreen) .qp-tabs-inline {
+        display: none !important;
+    }
+}
+
+/* 移动端：始终显示独立 tabs，隐藏内联 tabs */
+@media (max-width: 768px) {
+    .qp-tabs-inline {
+        display: none !important;
+    }
 }
 
 @keyframes qpSlideUp {
@@ -77,6 +107,9 @@
     to { transform: translateX(100%); }
 }
 
+/* ============================================
+   其余样式保持不变
+   ============================================ */
 .qp-panel-header {
     display: flex;
     justify-content: space-between;
@@ -132,12 +165,17 @@
 }
 
 .qp-close-btn {
-    background: none; border: none;
-    font-size: 20px; cursor: pointer;
-    color: var(--text); padding: 0 4px;
-    line-height: 1; flex-shrink: 0;
+    background: none;
+    border: none;
+    font-size: 20px;
+    cursor: pointer;
+    color: var(--text);
+    padding: 0 4px;
+    line-height: 1;
+    flex-shrink: 0;
 }
 
+/* Tabs 容器 */
 .qp-tabs-container {
     display: flex;
     align-items: stretch;
@@ -168,7 +206,6 @@
     background: var(--faint-contrast);
     border-radius: 3px;
 }
-
 .qp-tabs {
     scrollbar-width: thin;
     scrollbar-color: var(--faint-contrast) transparent;
@@ -197,8 +234,10 @@
     border: none;
     border-radius: 0.4em 0.4em 0 0;
     background: none;
-    color: var(--text); cursor: pointer;
-    font-size: 14px; white-space: nowrap;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 14px;
+    white-space: nowrap;
     transition: all .2s;
 }
 
@@ -237,6 +276,7 @@
     cursor: default;
 }
 
+/* 内容区域 */
 .qp-content {
     flex: 1;
     overflow: hidden;
@@ -262,6 +302,7 @@
     justify-content: center;
 }
 
+/* Tab 重命名输入框 */
 .qp-tab-rename-input {
     min-width: 60px;
     max-width: 150px;
@@ -275,24 +316,7 @@
     outline: none;
 }
 
-.qp-tab-rename-input:focus {
-    box-shadow: none;
-}
-
-.qp-tab {
-    cursor: pointer;
-    user-select: none;
-}
-
-.qp-tab:hover {
-    opacity: 0.9;
-}
-
-.qp-tab[title] {
-    cursor: pointer;
-}
-
-/* 内联 tabs 样式 - 仅全屏模式使用 */
+/* 内联 Tabs（全屏模式） */
 .qp-tabs-inline::-webkit-scrollbar {
     height: 3px;
 }
@@ -323,105 +347,6 @@
     border: 1px solid var(--text);
     border-bottom: none;
     border-radius: 0.4em 0.4em 0 0;
-}
-
-
-.menu-bar-qp-btn {
-    cursor: pointer;
-    color: var(--text);
-    border-radius: 4px;
-    padding: 4px 8px;
-}
-.menu-bar-qp-btn:hover {
-    background-color: var(--text);
-    color: var(--bg);
-}
-.menu-bar-qp-btn .btn-label {
-    display: inline;
-    margin-left: .3em;
-}
-
-@media (max-width: 672px) {
-    .menu-bar-qp-btn .btn-label { display: none; }
-}
-
-@media (max-width: 768px) {
-    .qp-panel.qp-desktop { display: none; }
-    .qp-panel.qp-mobile { height: 99.6%; }
-}
-
-@media (min-width: 769px) {
-    .qp-panel.qp-mobile { display: none; }
-}
-
-/* 全屏模式 */
-.qp-panel.qp-fullscreen {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    width: 100vw;
-    height: 100vh;
-    max-width: 100vw;
-    border-left: none;
-    border-radius: 0;
-    z-index: 9999;
-    background: var(--bg);
-}
-
-/* 内联 tabs 样式 - 仅全屏模式使用 */
-.qp-tabs-inline::-webkit-scrollbar {
-    height: 3px;
-}
-.qp-tabs-inline::-webkit-scrollbar-track {
-    background: transparent;
-}
-.qp-tabs-inline::-webkit-scrollbar-thumb {
-    background: var(--faint-contrast);
-    border-radius: 3px;
-}
-.qp-tabs-inline {
-    scrollbar-width: thin;
-    scrollbar-color: var(--faint-contrast) transparent;
-}
-
-.qp-tab-wrapper-inline {
-    display: flex;
-    align-items: center;
-    flex-shrink: 0;
-}
-
-.qp-tab-inline:hover {
-    opacity: 0.8;
-}
-
-.qp-tab-active-inline {
-    font-weight: bold;
-    border: 1px solid var(--text);
-    border-bottom: none;
-    border-radius: 0.4em 0.4em 0 0;
-}
-
-/* 全屏模式下隐藏独立的 tabs 容器（桌面端） */
-@media (min-width: 769px) {
-    .qp-fullscreen .qp-tabs-container {
-        display: none !important;
-    }
-}
-
-/* 非全屏桌面模式下：显示独立 tabs，隐藏内联 tabs */
-@media (min-width: 769px) {
-    .qp-panel:not(.qp-fullscreen) .qp-tabs-inline {
-        display: none !important;
-    }
-}
-
-/* 移动端：始终显示独立 tabs，隐藏内联 tabs */
-@media (max-width: 768px) {
-    .qp-tabs-inline {
-        display: none !important;
-    }
 }
 
 /* 三列切换按钮 */
@@ -483,4 +408,39 @@
 .qp-multi-column-content .qp-empty {
     padding: 10px;
     font-size: 12px;
+}
+
+/* 菜单按钮 */
+.menu-bar-qp-btn {
+    cursor: pointer;
+    color: var(--text);
+    border-radius: 4px;
+    padding: 4px 8px;
+}
+.menu-bar-qp-btn:hover {
+    background-color: var(--text);
+    color: var(--bg);
+}
+.menu-bar-qp-btn .btn-label {
+    display: inline;
+    margin-left: .3em;
+}
+
+@media (max-width: 672px) {
+    .menu-bar-qp-btn .btn-label {
+        display: none;
+    }
+}
+
+/* 移动端适配 */
+@media (max-width: 768px) {
+    .qp-panel.qp-desktop {
+        display: none !important;
+    }
+}
+
+@media (min-width: 769px) {
+    .qp-panel.qp-mobile {
+        display: none !important;
+    }
 }
