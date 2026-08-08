@@ -1,4 +1,4 @@
-exports.version = 2.3
+exports.version = 2.4
 exports.description = "A quick-access panel for HFS that lets users switch between multiple web pages via custom tabs."
 exports.repo = "Hug3O/QuickPages"
 exports.apiRequired = 8.87
@@ -11,14 +11,12 @@ exports.config = {
         fields: {
             name: { label: 'Tab Name' },
             url: { label: 'URL', helperText: 'The webpage address to load in this tab' },
-            // ====== 新增：公开访问配置 ======
             publicPage: {
                 type: 'boolean',
                 label: 'Allow public access (Guest)',
                 defaultValue: false,
                 helperText: 'When enabled, unauthenticated users (Guest) can view this page.'
             }
-            // ====== 新增结束 ======
         },
         defaultValue: [{ name: 'General', url: '', publicPage: false }],
         helperText: 'Add or remove tabs. Each tab can load a different webpage.',
@@ -49,16 +47,13 @@ exports.init = async api => {
     
     const API_BASE = `${api.Const.API_URI}quickpages/`
 
-    // ====== 新增：获取公开页面列表 ======
     function getPublicPages() {
         const list = api.getConfig('tabList') || [{ name: 'General', url: '', publicPage: false }]
         return list.filter(t => t.publicPage === true).map(t => t.name).filter(Boolean)
     }
-    // ====== 新增结束 ======
 
     function isAllowed(username) {
         if (!username) {
-            // 访客只能访问公开页面
             const publicPages = getPublicPages()
             return publicPages.length > 0
         }
@@ -68,11 +63,9 @@ exports.init = async api => {
         return allowed.includes(username)
     }
 
-    // ====== 新增：检查是否有公开页面 ======
     function hasPublicPages() {
         return getPublicPages().length > 0
     }
-    // ====== 新增结束 ======
 
     function getTabs() {
         const list = api.getConfig('tabList') || [{ name: 'General', url: '' }]
@@ -81,42 +74,64 @@ exports.init = async api => {
 
     const TABS_DATA_FILE = path.join(storage, 'quickpages_tabs_order.json')
     
+    // ====== 修复：优先保留 _tabs_order.json 中的排序 ======
     async function getTabsData() {
+        const currentTabs = getTabs()
+        const currentTabNames = currentTabs.map(t => t.name)
+        const currentTabSet = new Set(currentTabNames)
+        
+        // 加载保存的数据
+        let savedOrder = []
+        let savedNames = {}
+        
         try {
             const data = await fs.readFile(TABS_DATA_FILE, 'utf-8')
-            const saved = JSON.parse(data)
-            const currentTabs = getTabs()
-            let order, names
-            if (Array.isArray(saved)) {
-                order = saved
-                names = {}
+            const parsed = JSON.parse(data)
+            
+            // 兼容旧格式（纯数组）
+            if (Array.isArray(parsed)) {
+                savedOrder = parsed
+                savedNames = {}
             } else {
-                order = saved.order || []
-                names = saved.names || {}
+                savedOrder = parsed.order || []
+                savedNames = parsed.names || {}
             }
-            let valid = order.filter(t => currentTabs.some(ct => ct.name === t))
-            for (const ct of currentTabs) {
-                if (!valid.includes(ct.name)) valid.push(ct.name)
-            }
-            const cleanedNames = {}
-            for (const [key, value] of Object.entries(names)) {
-                if (currentTabs.some(ct => ct.name === key)) {
-                    cleanedNames[key] = value
-                }
-            }
-            if (valid.length !== order.length || 
-                valid.some((t, i) => t !== order[i]) ||
-                Object.keys(cleanedNames).length !== Object.keys(names).length) {
-                await saveTabsData(valid, cleanedNames)
-            }
-            return { order: valid, names: cleanedNames }
         } catch {
-            const tabs = getTabs()
-            const order = tabs.map(t => t.name)
-            await saveTabsData(order, {})
-            return { order, names: {} }
+            // 文件不存在，使用默认值
+            savedOrder = []
+            savedNames = {}
         }
+        
+        // 1. 保留 _tabs_order.json 中已有的排序（过滤掉已删除的 tab）
+        const validExistingOrder = savedOrder.filter(name => currentTabSet.has(name))
+        
+        // 2. 找出配置中有但映射中没有的新 tab（保持配置中的相对顺序）
+        const existingSet = new Set(validExistingOrder)
+        const newTabs = currentTabNames.filter(name => !existingSet.has(name))
+        
+        // 3. 合并：先保留原有排序，再追加新 tab
+        const newOrder = [...validExistingOrder, ...newTabs]
+        
+        // 4. 清理已删除 tab 的自定义名称
+        const cleanedNames = {}
+        for (const [key, value] of Object.entries(savedNames)) {
+            if (currentTabSet.has(key)) {
+                cleanedNames[key] = value
+            }
+        }
+        
+        // 5. 如果有变化，保存
+        const orderChanged = newOrder.length !== savedOrder.length || 
+            newOrder.some((t, i) => t !== (savedOrder[i] || ''))
+        const namesChanged = Object.keys(cleanedNames).length !== Object.keys(savedNames).length
+        
+        if (orderChanged || namesChanged) {
+            await saveTabsData(newOrder, cleanedNames)
+        }
+        
+        return { order: newOrder, names: cleanedNames }
     }
+    // ====== 修复结束 ======
     
     async function saveTabsData(order, names = {}) {
         await fs.writeFile(TABS_DATA_FILE, JSON.stringify({ order, names }, null, 2))
@@ -126,30 +141,40 @@ exports.init = async api => {
         const username = getCurrentUsername(ctx)
         const tabsData = await getTabsData()
         const tabs = getTabs()
-        const order = tabsData.order.length > 0 ? tabsData.order : tabs.map(t => t.name)
-        let orderedTabs = order.map(name => tabs.find(t => t.name === name)).filter(Boolean)
         
-        // ====== 修改：访客只返回公开页面 ======
+        // 使用保存的排序，并过滤掉已删除的 tab
+        const order = tabsData.order.length > 0 ? tabsData.order : tabs.map(t => t.name)
+        const orderSet = new Set(order)
+        // 确保所有当前 tab 都在 order 中（已由 getTabsData 保证）
+        // 但为了安全，再做一次过滤
+        let orderedTabs = order
+            .filter(name => tabs.some(t => t.name === name))
+            .map(name => tabs.find(t => t.name === name))
+            .filter(Boolean)
+        
+        // 如果还有不在 order 中的 tab（理论上不会发生，但以防万一）
+        const orderedNames = new Set(orderedTabs.map(t => t.name))
+        const missingTabs = tabs.filter(t => !orderedNames.has(t.name))
+        if (missingTabs.length > 0) {
+            orderedTabs = [...orderedTabs, ...missingTabs]
+        }
+        
+        // 访客只返回公开页面
         if (!username) {
             const publicPages = getPublicPages()
             orderedTabs = orderedTabs.filter(t => publicPages.includes(t.name))
         }
-        // ====== 修改结束 ======
         
-        // ====== 修改：权限检查 ======
         if (username && !isAllowed(username)) {
             ctx.status = 403
             return
         }
-        // ====== 修改结束 ======
         
         ctx.body = { 
             tabs: orderedTabs,
             tabNames: tabsData.names,
-            // ====== 新增：返回公开页面列表和访客状态 ======
             publicTabs: getPublicPages(),
             isGuest: !username
-            // ====== 新增结束 ======
         }
         ctx.status = 200
     }
@@ -195,7 +220,6 @@ exports.init = async api => {
         ctx.status = 200
     }
 
-    // ====== 新增：检查访问权限接口 ======
     async function checkAccess(ctx) {
         const username = getCurrentUsername(ctx)
         const publicPages = getPublicPages()
@@ -207,7 +231,19 @@ exports.init = async api => {
         }
         ctx.status = 200
     }
-    // ====== 新增结束 ======
+    
+    // 监听配置变化，同步排序
+    api.subscribeConfig(['tabList'], async () => {
+        try {
+            // 重新同步排序
+            await getTabsData()
+            // 通知前端刷新
+            const tabsData = await getTabsData()
+            api.notifyClient('quickpages', 'tabsReordered', { tabs: tabsData.order })
+        } catch (e) {
+            console.error('QuickPages: Failed to sync tabs on config change:', e)
+        }
+    })
     
     return {
         async middleware(ctx) {
@@ -216,9 +252,7 @@ exports.init = async api => {
             
             const method = ctx.method.toUpperCase()
             
-            // ====== 新增：check 接口 ======
             if (p === `${API_BASE}check` && method === 'GET') { await checkAccess(ctx); return }
-            // ====== 新增结束 ======
             if (p === `${API_BASE}tabs` && method === 'GET') { await getTabInfo(ctx); return }
             if (p === `${API_BASE}reorder-tabs` && method === 'POST') { await reorderTabs(ctx); return }
             if (p === `${API_BASE}rename-tab` && method === 'POST') { await renameTab(ctx); return }

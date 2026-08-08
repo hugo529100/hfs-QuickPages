@@ -13,7 +13,6 @@
                 publicTabs: data.publicTabs || []
             };
         } catch {
-            // 如果接口不存在，默认允许访问（兼容旧版本）
             return {
                 allowed: true,
                 isGuest: false,
@@ -42,6 +41,7 @@
         const panelRef = useRef(null);
         const isFullscreenRef = useRef(false);
         const fullscreenGridRef = useRef(null);
+        const closingRef = useRef(false);
         
         // ====== 使用传入的访客状态 ======
         const isGuest = propIsGuest;
@@ -50,6 +50,7 @@
         
         useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
         useEffect(() => { isFullscreenRef.current = isFullscreen; }, [isFullscreen]);
+        useEffect(() => { closingRef.current = closing; }, [closing]);
         
         // 保存 activeTab 到 localStorage
         useEffect(() => {
@@ -75,9 +76,44 @@
             return () => window.removeEventListener('resize', handleResize);
         }, []);
 
+        // ====== 检测桌面设备（与 Notes 插件一致） ======
+        const isDesktopDevice = useCallback(() => {
+            return window.innerWidth > 768 && !('ontouchstart' in window);
+        }, []);
+
+        // ====== 点击外部关闭面板（与 Notes 插件机制一致） ======
+        useEffect(() => {
+            if (!isDesktopDevice()) return;
+
+            const handleClickOutside = (e) => {
+                const panel = panelRef.current;
+                if (!panel || closingRef.current) return;
+
+                const rect = panel.getBoundingClientRect();
+                const margin = 100;
+
+                const isOutside = (
+                    e.clientX < rect.left - margin ||
+                    e.clientX > rect.right + margin ||
+                    e.clientY < rect.top - margin ||
+                    e.clientY > rect.bottom + margin
+                );
+
+                if (isOutside) {
+                    handleClose();
+                }
+            };
+
+            // 使用 mousedown 而不是 click，更可靠
+            document.addEventListener('mousedown', handleClickOutside);
+
+            return () => {
+                document.removeEventListener('mousedown', handleClickOutside);
+            };
+        }, [isDesktopDevice]);
+
         // ====== 全屏模式切换 - 手机禁用 ======
         const toggleFullscreen = useCallback(() => {
-            // 手机浏览器禁用全屏
             if (isMobile) {
                 HFS.toast?.('Fullscreen mode not available on mobile', 'info');
                 return;
@@ -99,7 +135,6 @@
                 setIsMultiColumn(false);
                 setOtherTabData({});
                 setFullscreenLoadState({});
-                // 恢复 body 滚动
                 document.body.style.overflow = '';
             }
         }, [isMobile]);
@@ -128,7 +163,6 @@
             const newState = !isMultiColumn;
             setIsMultiColumn(newState);
             if (newState) {
-                // 加载其他 tab 的数据
                 const otherTabs = tabs.filter(t => t.name !== activeTab);
                 otherTabs.forEach(tab => {
                     loadOtherTabNotes(tab);
@@ -222,15 +256,19 @@
             return tabNames[tabKey] || tabKey;
         }, [tabNames]);
 
-        const handleClose = () => {
+        // ====== 修改：使用 useCallback 包装 handleClose，便于在 useEffect 中使用 ======
+        const handleClose = useCallback(() => {
+            if (closingRef.current) return;
             setClosing(true);
             if (isFullscreenRef.current) {
                 document.exitFullscreen?.().catch(() => {});
             }
-            // 恢复 body 滚动
             document.body.style.overflow = '';
-            setTimeout(onClose, 300);
-        };
+            setTimeout(() => {
+                onClose();
+            }, 300);
+        }, [onClose]);
+        // ====== 修改结束 ======
 
         const handleRefresh = () => {
             if (iframeRef.current) {
@@ -239,25 +277,21 @@
         };
 
         const handleRenameStart = (tab) => {
-            // ====== 访客不允许重命名 ======
             if (isGuest) {
                 HFS.toast?.('Please login to rename tabs', 'info');
                 return;
             }
-            // ====== 访客限制结束 ======
             setRenamingTab(tab);
             setRenameValue(tabNames[tab] || '');
         };
 
         const handleRenameSave = async () => {
             if (!renamingTab) return;
-            // ====== 访客不允许重命名 ======
             if (isGuest) {
                 HFS.toast?.('Please login to rename tabs', 'info');
                 setRenamingTab(null);
                 return;
             }
-            // ====== 访客限制结束 ======
             const newName = renameValue.trim();
             try {
                 await fetch('/~/api/quickpages/rename-tab', {
@@ -307,12 +341,10 @@
             fetch('/~/api/quickpages/tabs')
                 .then(r => r.json())
                 .then(data => {
-                    // ====== 访客过滤 tabs ======
                     let availableTabs = data.tabs || [];
                     if (isGuest && publicTabs.length > 0) {
                         availableTabs = availableTabs.filter(t => publicTabs.includes(t.name));
                     }
-                    // ====== 访客过滤结束 ======
                     setTabs(availableTabs);
                     setTabNames(data.tabNames || {});
                     
@@ -342,14 +374,12 @@
                     if (e === 'tabsReordered') {
                         if (data.tabs && Array.isArray(data.tabs)) {
                             const currentTabs = tabs;
-                            // ====== 访客过滤 ======
                             let orderedTabs = data.tabs.map(name => 
                                 currentTabs.find(t => t.name === name) || { name, url: '' }
                             ).filter(Boolean);
                             if (isGuest && publicTabs.length > 0) {
                                 orderedTabs = orderedTabs.filter(t => publicTabs.includes(t.name));
                             }
-                            // ====== 访客过滤结束 ======
                             setTabs(orderedTabs);
                             if (!orderedTabs.some(t => t.name === activeTabRef.current)) {
                                 setActiveTab(orderedTabs[0]?.name || '');
@@ -382,12 +412,10 @@
         }, [tabs, activeTab]);
 
         const moveTab = (tab, direction) => {
-            // ====== 访客不允许移动 tab ======
             if (isGuest) {
                 HFS.toast?.('Please login to reorder tabs', 'info');
                 return;
             }
-            // ====== 访客限制结束 ======
             const idx = tabs.findIndex(t => t.name === tab);
             if (idx === -1) return;
             
@@ -423,7 +451,7 @@
             return getMultiColumns();
         }, [getMultiColumns]);
 
-        // 渲染内联 tabs（仅全屏模式使用）
+        // ====== 渲染内联 tabs（仅全屏模式使用） ======
         const renderTabsInline = () => {
             return h('div', { 
                 className: 'qp-tabs-inline',
@@ -462,13 +490,11 @@
                             onDoubleClick: (e) => {
                                 e.preventDefault();
                                 e.stopPropagation();
-                                // ====== 访客不允许重命名 ======
                                 if (!isGuest) {
                                     handleRenameStart(tab.name);
                                 } else {
                                     HFS.toast?.('Please login to rename tabs', 'info');
                                 }
-                                // ====== 访客限制结束 ======
                             },
                             title: isGuest ? 'Login to rename' : 'Double-click to rename',
                             style: {
@@ -489,7 +515,7 @@
             );
         };
 
-        // 渲染独立的 tabs 行（非全屏模式使用）
+        // ====== 渲染独立的 tabs 行（非全屏模式使用） ======
         const renderTabsStandalone = () => {
             return h('div', { className: 'qp-tabs-container' },
                 h('div', { className: 'qp-tabs' },
@@ -510,20 +536,17 @@
                                 onDoubleClick: (e) => {
                                     e.preventDefault();
                                     e.stopPropagation();
-                                    // ====== 访客不允许重命名 ======
                                     if (!isGuest) {
                                         handleRenameStart(tab.name);
                                     } else {
                                         HFS.toast?.('Please login to rename tabs', 'info');
                                     }
-                                    // ====== 访客限制结束 ======
                                 },
                                 title: isGuest ? 'Login to rename' : 'Double-click to rename'
                             }, getTabDisplayName(tab.name))
                         )
                     )
                 ),
-                // ====== 访客隐藏排序按钮 ======
                 !isGuest && h('div', { className: 'qp-tab-sort' },
                     h('button', {
                         className: 'qp-sort-btn',
@@ -538,7 +561,6 @@
                         title: 'Move right'
                     }, '▶')
                 )
-                // ====== 访客隐藏结束 ======
             );
         };
 
@@ -587,7 +609,6 @@
                 )
             );
         }
-        // ====== tabs 为空提示结束 ======
 
         return h('div', { 
             className: `qp-panel ${isMobile ? 'qp-mobile' : 'qp-desktop'} ${closing ? 'qp-closing' : ''} ${isFullscreen ? 'qp-fullscreen' : ''}`,
@@ -785,139 +806,142 @@
     }
 
     // ====== QuickPageApp - 在框架外渲染 ======
-    // ====== QuickPageApp - 在框架外渲染 ======
-function QuickPageApp() {
-    const { username } = HFS.useSnapState();
-    const [show, setShow] = useState(false);
-    const [hasAccess, setHasAccess] = useState(false);
-    const [publicTabs, setPublicTabs] = useState([]);
-    const [isGuest, setIsGuest] = useState(false);
-    const mountRef = useRef(null);
+    function QuickPageApp() {
+        const { username } = HFS.useSnapState();
+        const [show, setShow] = useState(false);
+        const [hasAccess, setHasAccess] = useState(false);
+        const [publicTabs, setPublicTabs] = useState([]);
+        const [isGuest, setIsGuest] = useState(false);
+        const mountRef = useRef(null);
+        const showRef = useRef(false);
 
-    // ====== 检查访问权限 ======
-    useEffect(() => {
-        checkAccess().then(result => {
-            setHasAccess(result.allowed);
-            setPublicTabs(result.publicTabs || []);
-            setIsGuest(result.isGuest || false);
-        });
-    }, []);
-    // ====== 访问权限检查结束 ======
+        useEffect(() => { showRef.current = show; }, [show]);
 
-    useEffect(() => {
-        const fn = () => setShow(prev => !prev);
-        window.addEventListener('toggle-quickpages', fn);
-        return () => window.removeEventListener('toggle-quickpages', fn);
-    }, []);
-
-    // ====== 使用 createElement 在框架外渲染 ======
-    useEffect(() => {
-        // 清理之前的挂载点
-        if (mountRef.current) {
-            if (mountRef.current.parentNode) {
-                document.body.removeChild(mountRef.current);
-            }
-            mountRef.current = null;
-        }
-
-        if (!hasAccess || !show) return;
-
-        // 创建容器 - 全屏透明覆盖层，用于捕获点击关闭
-        const container = document.createElement('div');
-        container.style.cssText = `
-            position: fixed !important;
-            top: 0 !important;
-            left: 0 !important;
-            width: 100% !important;
-            height: 100% !important;
-            z-index: 10 !important;
-            pointer-events: none !important;
-            overflow: hidden !important;
-            touch-action: none !important;
-            margin: 0 !important;
-            padding: 0 !important;
-            background: transparent !important;
-        `;
-        document.body.appendChild(container);
-        mountRef.current = container;
-
-        try {
-            const element = h(QuickPagePanel, { 
-                onClose: () => setShow(false),
-                publicTabs: publicTabs,
-                isGuest: isGuest
+        // ====== 检查访问权限 ======
+        useEffect(() => {
+            checkAccess().then(result => {
+                setHasAccess(result.allowed);
+                setPublicTabs(result.publicTabs || []);
+                setIsGuest(result.isGuest || false);
             });
+        }, []);
+        // ====== 访问权限检查结束 ======
 
-            if (HFS.ReactDOM && HFS.ReactDOM.render) {
-                HFS.ReactDOM.render(element, container);
-                console.log('QuickPages: Rendered with ReactDOM.render');
-            } else if (HFS.React && HFS.React.render) {
-                HFS.React.render(element, container);
-                console.log('QuickPages: Rendered with React.render');
-            } else {
-                renderFallbackUI(container);
+        useEffect(() => {
+            const fn = () => setShow(prev => !prev);
+            window.addEventListener('toggle-quickpages', fn);
+            return () => window.removeEventListener('toggle-quickpages', fn);
+        }, []);
+
+        // ====== 使用 createElement 在框架外渲染 ======
+        useEffect(() => {
+            // 清理之前的挂载点
+            if (mountRef.current) {
+                if (mountRef.current.parentNode) {
+                    document.body.removeChild(mountRef.current);
+                }
+                mountRef.current = null;
             }
-        } catch (e) {
-            console.error('QuickPages: Render error:', e);
-            renderFallbackUI(container);
-        }
 
-        function renderFallbackUI(container) {
-            const panel = document.createElement('div');
-            panel.style.cssText = `
+            if (!hasAccess || !show) return;
+
+            // 创建容器 - 全屏透明覆盖层，用于捕获点击关闭
+            const container = document.createElement('div');
+            container.className = 'qp-overlay';
+            container.style.cssText = `
                 position: fixed !important;
                 top: 0 !important;
-                right: 0 !important;
-                width: 480px !important;
-                max-width: 92vw !important;
-                height: 100vh !important;
-                background: #1a1a1a !important;
-                color: #ccc !important;
+                left: 0 !important;
+                width: 100% !important;
+                height: 100% !important;
                 z-index: 10 !important;
-                pointer-events: auto !important;
-                padding: 20px !important;
-                box-sizing: border-box !important;
-                display: flex !important;
-                flex-direction: column !important;
-                box-shadow: -8px 0 40px rgba(0,0,0,0.5) !important;
+                pointer-events: none !important;
+                overflow: hidden !important;
+                touch-action: none !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                background: transparent !important;
             `;
+            document.body.appendChild(container);
+            mountRef.current = container;
 
-            panel.innerHTML = `
-                <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #333;padding-bottom:10px;margin-bottom:10px;">
-                    <h2 style="margin:0;color:#fff;">Quick Pages</h2>
-                    <button onclick="this.closest('.qp-overlay').remove()" style="background:none;border:none;color:#fff;font-size:24px;cursor:pointer;">\u00D7</button>
-                </div>
-                <div style="flex:1;overflow-y:auto;">
-                    <p style="color:#666;text-align:center;padding-top:40px;">
-                        ⚠️ React render failed.<br>
-                        <span style="font-size:0.85em;">Please check browser console for errors.</span>
-                    </p>
-                </div>
-            `;
+            try {
+                const element = h(QuickPagePanel, { 
+                    onClose: () => setShow(false),
+                    publicTabs: publicTabs,
+                    isGuest: isGuest
+                });
 
-            container.style.pointerEvents = 'none';
-            panel.style.pointerEvents = 'auto';
-            container.appendChild(panel);
-
-            container.addEventListener('click', function(e) {
-                if (e.target === container) {
-                    setShow(false);
+                if (HFS.ReactDOM && HFS.ReactDOM.render) {
+                    HFS.ReactDOM.render(element, container);
+                    console.log('QuickPages: Rendered with ReactDOM.render');
+                } else if (HFS.React && HFS.React.render) {
+                    HFS.React.render(element, container);
+                    console.log('QuickPages: Rendered with React.render');
+                } else {
+                    renderFallbackUI(container);
                 }
-            });
-        }
-
-        return () => {
-            if (mountRef.current && mountRef.current.parentNode) {
-                document.body.removeChild(mountRef.current);
+            } catch (e) {
+                console.error('QuickPages: Render error:', e);
+                renderFallbackUI(container);
             }
-            mountRef.current = null;
-        };
-    }, [hasAccess, show, publicTabs, isGuest]);
-    // ====== 框架外渲染结束 ======
 
-    // ====== 不再返回 UI，由 useEffect 管理 ======
-    return null;
-}
+            function renderFallbackUI(container) {
+                const panel = document.createElement('div');
+                panel.style.cssText = `
+                    position: fixed !important;
+                    top: 0 !important;
+                    right: 0 !important;
+                    width: 480px !important;
+                    max-width: 92vw !important;
+                    height: 100vh !important;
+                    background: #1a1a1a !important;
+                    color: #ccc !important;
+                    z-index: 10 !important;
+                    pointer-events: auto !important;
+                    padding: 20px !important;
+                    box-sizing: border-box !important;
+                    display: flex !important;
+                    flex-direction: column !important;
+                    box-shadow: -8px 0 40px rgba(0,0,0,0.5) !important;
+                `;
+
+                panel.innerHTML = `
+                    <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #333;padding-bottom:10px;margin-bottom:10px;">
+                        <h2 style="margin:0;color:#fff;">Quick Pages</h2>
+                        <button onclick="this.closest('.qp-overlay').remove()" style="background:none;border:none;color:#fff;font-size:24px;cursor:pointer;">\u00D7</button>
+                    </div>
+                    <div style="flex:1;overflow-y:auto;">
+                        <p style="color:#666;text-align:center;padding-top:40px;">
+                            ⚠️ React render failed.<br>
+                            <span style="font-size:0.85em;">Please check browser console for errors.</span>
+                        </p>
+                    </div>
+                `;
+
+                container.style.pointerEvents = 'none';
+                panel.style.pointerEvents = 'auto';
+                container.appendChild(panel);
+
+                // 点击背景关闭
+                container.addEventListener('click', function(e) {
+                    if (e.target === container) {
+                        setShow(false);
+                    }
+                });
+            }
+
+            return () => {
+                if (mountRef.current && mountRef.current.parentNode) {
+                    document.body.removeChild(mountRef.current);
+                }
+                mountRef.current = null;
+            };
+        }, [hasAccess, show, publicTabs, isGuest]);
+        // ====== 框架外渲染结束 ======
+
+        return null;
+    }
 
     // ====== 按钮始终显示，不受登录状态影响 ======
     HFS.onEvent('appendMenuBar', () => {
