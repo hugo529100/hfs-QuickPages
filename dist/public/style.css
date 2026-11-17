@@ -2,25 +2,39 @@
    Quick Pages 插件样式
    ============================================ */
 
+:root {
+    /* 右側分割面板寬度（由 main.js 依拖曳結果改寫） */
+    --qp-panel-width: max(32vw, 300px);
+    /* 不透明底色，避免 Orange 主題的半透明 --bg 透出後方內容 */
+    --qp-mask-bg: #ffffff;
+}
+
+:root .theme-dark {
+    --qp-mask-bg: #080500;
+}
+
 /* 面板容器 - 由 JS 创建，样式内联 */
 .qp-panel {
     pointer-events: auto !important;
     display: flex !important;
     flex-direction: column !important;
-    background: var(--bg) !important;
+    background-color: var(--qp-mask-bg) !important;
+    background-image: linear-gradient(var(--bg), var(--bg)) !important;
     height: 100% !important;
     width: 100% !important;
+    box-sizing: border-box !important;
     position: relative !important;
 }
 
-/* 桌面端面板 - 固定定位从右侧滑出 */
+/* 桌面端面板 - 固定定位從右側分割 */
 .qp-panel.qp-desktop {
     position: fixed !important;
     top: 0 !important;
     right: 0 !important;
     height: 100vh !important;
-    width: 450px !important;
-    max-width: 90vw !important;
+    width: var(--qp-panel-width, 450px) !important;
+    min-width: 300px !important;
+    max-width: 80vw !important;
     border-left: 1px solid var(--text) !important;
     backdrop-filter: blur(4px) !important;
     animation: qpSlideRight 0.5s ease-out !important;
@@ -38,7 +52,7 @@
     bottom: 0 !important;
     left: 0 !important;
     right: 0 !important;
-    height: 99.6% !important;
+    height: 99.8% !important;
     border-radius: 6px 6px 0 0 !important;
     border: 1px solid var(--text) !important;
     border-bottom: none !important;
@@ -442,5 +456,158 @@
 @media (min-width: 769px) {
     .qp-panel.qp-mobile {
         display: none !important;
+    }
+}
+
+/* ============================================================
+   右側分割面板：拖曳分隔條、主界面讓位、窄屏 Tree-nav 聯動
+   ============================================================ */
+
+/* 面板左緣的拖曳命中區（分界線直接使用面板的 border-left） */
+.qp-panel-resizer {
+    position: absolute;
+    top: 0;
+    left: -7px;
+    width: 14px;
+    height: 100%;
+    z-index: 30;
+    cursor: col-resize;
+    touch-action: none;
+    user-select: none;
+    background: transparent;
+}
+.qp-panel-resizer::before {
+    content: '';
+    position: absolute;
+    inset: -4px -6px;
+    background: transparent;
+}
+
+.qp-panel-resizer-grip {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 10px;
+    height: 30px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    background: var(--bg);
+    border: 1px solid var(--faint-contrast);
+    border-radius: 4px;
+    color: var(--faint-contrast);
+    opacity: .85;
+    pointer-events: none;
+    transition: color .15s ease, border-color .15s ease, opacity .15s ease, transform .15s ease;
+}
+.qp-panel-resizer-grip::before,
+.qp-panel-resizer-grip::after {
+    content: '';
+    display: block;
+    width: 0;
+    height: 0;
+    background: transparent;
+    border-radius: 0;
+}
+.qp-panel-resizer-grip::before {
+    border-left: 3px solid transparent;
+    border-right: 3px solid transparent;
+    border-bottom: 4px solid currentColor;
+    border-top: none;
+}
+.qp-panel-resizer-grip::after {
+    border-left: 3px solid transparent;
+    border-right: 3px solid transparent;
+    border-top: 4px solid currentColor;
+    border-bottom: none;
+}
+.qp-panel-resizer:hover .qp-panel-resizer-grip,
+body.qp-panel-resizing .qp-panel-resizer-grip {
+    color: var(--text);
+    border-color: var(--text);
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.15);
+}
+
+body.qp-panel-resizing {
+    cursor: col-resize;
+    user-select: none;
+}
+
+/* 拖曳期間不讓 iframe 吃掉指標事件，否則往右縮時會斷在 iframe 上 */
+body.qp-panel-resizing .qp-iframe {
+    pointer-events: none !important;
+}
+
+.qp-panel.qp-fullscreen .qp-panel-resizer {
+    display: none !important;
+}
+
+/* 桌面：面板佔據右側，主內容、底欄、播放器、預覽對話框一起讓位。
+   只設定右側內縮，左側留給 Tree-nav，避免兩者互相覆蓋。 */
+@media (min-width: 769px) {
+    html body.qp-panel-layout.qp-panel-open > #banner {
+        margin-right: var(--qp-panel-width);
+        box-sizing: border-box;
+        width: auto;
+    }
+    html body.qp-panel-layout.qp-panel-open > #root {
+        padding-right: var(--qp-panel-width);
+        box-sizing: border-box;
+    }
+    html body.qp-panel-layout.qp-panel-open .bottom-bar-stack-positioner {
+        right: var(--qp-panel-width);
+        width: auto;
+    }
+    html body.qp-panel-layout.qp-panel-open #mmp-audio {
+        right: var(--qp-panel-width);
+        width: auto;
+    }
+    html body.qp-panel-layout.qp-panel-open .dialog-backdrop.file-show {
+        right: var(--qp-panel-width);
+        width: auto;
+    }
+    html body.qp-panel-layout.qp-panel-open .dialog-backdrop.dv-dialog-fullscreen {
+        right: var(--qp-panel-width);
+        width: auto;
+    }
+}
+
+/* 窄屏：面板改為全屏 sheet，Tree-nav 打開時讓出頂部/左側空間 */
+@media (max-width: 768px) {
+    .qp-panel-resizer {
+        display: none !important;
+    }
+
+    html body.hfs-tree-layout.hfs-tree-open.qp-panel-layout.qp-panel-open .qp-panel:not(.qp-fullscreen) {
+        top: var(--tree-mobile-h, 0px) !important;
+        bottom: 0 !important;
+        height: auto !important;
+        max-height: none !important;
+    }
+}
+
+@media (max-width: 768px) and (orientation: landscape) {
+    html body.hfs-tree-layout.hfs-tree-open.qp-panel-layout.qp-panel-open .qp-panel:not(.qp-fullscreen) {
+        top: 0 !important;
+        bottom: 0 !important;
+        left: var(--tree-width, 0px) !important;
+        right: 0 !important;
+        width: auto !important;
+        height: auto !important;
+        max-width: none !important;
+    }
+}
+
+/* 平板豎屏：Tree-nav 是頂部欄，右側面板從它下方開始 */
+@media (orientation: portrait) and (min-width: 769px) {
+    html body.hfs-tree-layout.hfs-tree-open.qp-panel-layout.qp-panel-open .qp-panel.qp-desktop:not(.qp-fullscreen) {
+        top: var(--tree-mobile-h, 0px) !important;
+        bottom: 0 !important;
+        height: auto !important;
+        max-height: none !important;
     }
 }

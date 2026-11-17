@@ -2,6 +2,51 @@
     const { h } = HFS;
     const { useState, useEffect, useRef, useMemo, useCallback } = HFS.React;
 
+    // ====== 側邊分割面板寬度（參考 Notes）======
+    const QP_PANEL_RATIO_CACHE = 'quickpages_panelRatio';
+    const QP_PANEL_RATIO_DEFAULT = 32;
+    const QP_PANEL_RATIO_MIN = 12;
+    const QP_PANEL_RATIO_MAX = 60;
+    const QP_PANEL_MIN_PX = 300;
+
+    function getQpPanelRatioMin(vw = window.innerWidth) {
+        if (!vw || vw <= 0) return QP_PANEL_RATIO_MIN;
+        return Math.min(QP_PANEL_RATIO_MAX, Math.max(QP_PANEL_RATIO_MIN, (QP_PANEL_MIN_PX / vw) * 100));
+    }
+    function clampQpPanelRatio(val, vw = window.innerWidth) {
+        if (!isFinite(val)) val = QP_PANEL_RATIO_DEFAULT;
+        return Math.max(getQpPanelRatioMin(vw), Math.min(QP_PANEL_RATIO_MAX, val));
+    }
+    function loadQpPanelRatio() {
+        try {
+            const v = parseFloat(localStorage.getItem(QP_PANEL_RATIO_CACHE));
+            if (isFinite(v)) return clampQpPanelRatio(v);
+        } catch {}
+        return clampQpPanelRatio(QP_PANEL_RATIO_DEFAULT);
+    }
+    function saveQpPanelRatio(val) {
+        val = clampQpPanelRatio(val);
+        if (!isFinite(val)) return;
+        try { localStorage.setItem(QP_PANEL_RATIO_CACHE, String(val)); } catch {}
+    }
+
+    // ====== 面板展開狀態持久化（刷新後恢復展開）======
+    const QP_PANEL_SHOW_CACHE = 'quickpages_panelShow';
+
+    function loadQpPanelShow() {
+        try {
+            const v = localStorage.getItem(QP_PANEL_SHOW_CACHE);
+            if (v === '0') return false;
+            if (v === '1') return true;
+        } catch {}
+        return false;
+    }
+    function saveQpPanelShow(open) {
+        try { localStorage.setItem(QP_PANEL_SHOW_CACHE, open ? '1' : '0'); } catch {}
+    }
+    // ====== 展開狀態結束 ======
+    // ====== 寬度結束 ======
+
     // ====== 访客访问控制 ======
     async function checkAccess() {
         try {
@@ -42,6 +87,10 @@
         const isFullscreenRef = useRef(false);
         const fullscreenGridRef = useRef(null);
         const closingRef = useRef(false);
+        const [panelRatio, setPanelRatio] = useState(loadQpPanelRatio);
+        const panelRatioRef = useRef(panelRatio);
+        const panelDragRef = useRef(null);
+        const panelWindowListenersRef = useRef(null);
         
         // ====== 使用传入的访客状态 ======
         const isGuest = propIsGuest;
@@ -76,41 +125,108 @@
             return () => window.removeEventListener('resize', handleResize);
         }, []);
 
-        // ====== 检测桌面设备（与 Notes 插件一致） ======
-        const isDesktopDevice = useCallback(() => {
-            return window.innerWidth > 768 && !('ontouchstart' in window);
+        // ====== 分割面板：body class / 寬度 / 拖曳調整 ======
+        useEffect(() => {
+            // 與 Notes 同一右側區域，開啟 QuickPages 時先收起 Notes
+            if (document.body.classList.contains('note-panel-open')) {
+                window.dispatchEvent(new CustomEvent('close-notes'));
+            }
         }, []);
 
-        // ====== 点击外部关闭面板（与 Notes 插件机制一致） ======
         useEffect(() => {
-            if (!isDesktopDevice()) return;
+            const safeRatio = clampQpPanelRatio(panelRatio);
+            document.body.style.setProperty('--qp-panel-width', safeRatio + 'vw');
+        }, [panelRatio]);
 
-            const handleClickOutside = (e) => {
-                const panel = panelRef.current;
-                if (!panel || closingRef.current) return;
+        useEffect(() => { panelRatioRef.current = panelRatio; }, [panelRatio]);
 
-                const rect = panel.getBoundingClientRect();
-                const margin = 100;
-
-                const isOutside = (
-                    e.clientX < rect.left - margin ||
-                    e.clientX > rect.right + margin ||
-                    e.clientY < rect.top - margin ||
-                    e.clientY > rect.bottom + margin
-                );
-
-                if (isOutside) {
-                    handleClose();
+        useEffect(() => {
+            const handleResize = () => {
+                // 全屏時視窗尺寸會變成螢幕尺寸，不要因此改掉使用者的分割寬度
+                if (isFullscreenRef.current || document.fullscreenElement) return;
+                // 手機是滿版 sheet，不需要把桌面的分割比例改成 300px 下限
+                if (window.innerWidth <= 768) return;
+                const clamped = clampQpPanelRatio(panelRatioRef.current);
+                if (Math.abs(clamped - panelRatioRef.current) > 0.01) {
+                    panelRatioRef.current = clamped;
+                    setPanelRatio(clamped);
+                    saveQpPanelRatio(clamped);
                 }
             };
+            handleResize();
+            window.addEventListener('resize', handleResize);
+            return () => window.removeEventListener('resize', handleResize);
+        }, []);
 
-            // 使用 mousedown 而不是 click，更可靠
-            document.addEventListener('mousedown', handleClickOutside);
+        const detachPanelWindowListeners = useCallback(() => {
+            const listeners = panelWindowListenersRef.current;
+            if (!listeners) return;
+            window.removeEventListener('pointermove', listeners.onMove, true);
+            window.removeEventListener('pointerup', listeners.onEnd, true);
+            window.removeEventListener('pointercancel', listeners.onEnd, true);
+            panelWindowListenersRef.current = null;
+        }, []);
 
-            return () => {
-                document.removeEventListener('mousedown', handleClickOutside);
+        const handlePanelResizeMove = useCallback((e) => {
+            const d = panelDragRef.current;
+            if (!d) return;
+            const dx = e.clientX - d.startX;
+            if (!d.moved) {
+                if (Math.abs(dx) < 3) return;
+                d.moved = true;
+            }
+            e.preventDefault();
+            let next = d.startRatio + (-dx / d.vw) * 100;
+            next = Math.max(getQpPanelRatioMin(d.vw), Math.min(QP_PANEL_RATIO_MAX, next));
+            d.lastRatio = next;
+            document.body.style.setProperty('--qp-panel-width', next + 'vw');
+        }, []);
+
+        const handlePanelResizeEnd = useCallback((e) => {
+            const d = panelDragRef.current;
+            if (!d) return;
+            panelDragRef.current = null;
+            detachPanelWindowListeners();
+            const target = e && e.currentTarget;
+            if (target && typeof target.releasePointerCapture === 'function' && e.pointerId != null) {
+                try { target.releasePointerCapture(e.pointerId); } catch {}
+            }
+            document.body.classList.remove('qp-panel-resizing');
+            if (!d.moved) return;
+            const finalRatio = clampQpPanelRatio(d.lastRatio);
+            setPanelRatio(finalRatio);
+            saveQpPanelRatio(finalRatio);
+        }, [detachPanelWindowListeners]);
+
+        const handlePanelResizeStart = useCallback((e) => {
+            if (isFullscreenRef.current || isMobile) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const vw = window.innerWidth;
+            const startRatio = clampQpPanelRatio(panelRatioRef.current, vw);
+            panelDragRef.current = {
+                startX: e.clientX,
+                startRatio,
+                vw,
+                lastRatio: startRatio,
+                moved: false
             };
-        }, [isDesktopDevice]);
+            try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+
+            // 直接掛在 window 上，面板邊緣移動時也不怕 pointer capture 失效
+            detachPanelWindowListeners();
+            const onMove = (ev) => handlePanelResizeMove(ev);
+            const onEnd = (ev) => handlePanelResizeEnd(ev);
+            panelWindowListenersRef.current = { onMove, onEnd };
+            window.addEventListener('pointermove', onMove, true);
+            window.addEventListener('pointerup', onEnd, true);
+            window.addEventListener('pointercancel', onEnd, true);
+
+            document.body.classList.add('qp-panel-resizing');
+        }, [isMobile, handlePanelResizeMove, handlePanelResizeEnd, detachPanelWindowListeners]);
+
+        useEffect(() => () => detachPanelWindowListeners(), [detachPanelWindowListeners]);
+        // ====== 分割面板設定結束 ======
 
         // ====== 全屏模式切换 - 手机禁用 ======
         const toggleFullscreen = useCallback(() => {
@@ -135,7 +251,6 @@
                 setIsMultiColumn(false);
                 setOtherTabData({});
                 setFullscreenLoadState({});
-                document.body.style.overflow = '';
             }
         }, [isMobile]);
         // ====== 全屏切换结束 ======
@@ -149,7 +264,6 @@
                     setIsMultiColumn(false);
                     setOtherTabData({});
                     setFullscreenLoadState({});
-                    document.body.style.overflow = '';
                 }
             };
             document.addEventListener('fullscreenchange', handleFullscreenChange);
@@ -259,14 +373,15 @@
         // ====== 修改：使用 useCallback 包装 handleClose，便于在 useEffect 中使用 ======
         const handleClose = useCallback(() => {
             if (closingRef.current) return;
+            // 使用者已按下關閉：立即記住，避免關閉動畫中刷新又自動展開
+            saveQpPanelShow(false);
             setClosing(true);
             if (isFullscreenRef.current) {
                 document.exitFullscreen?.().catch(() => {});
             }
-            document.body.style.overflow = '';
             setTimeout(() => {
                 onClose();
-            }, 300);
+            }, 500);
         }, [onClose]);
         // ====== 修改结束 ======
 
@@ -317,25 +432,6 @@
                 handleRenameCancel();
             }
         };
-
-        // body 滚动控制
-        useEffect(() => {
-            const originalOverflow = document.body.style.overflow;
-            if (!isFullscreenRef.current) {
-                document.body.style.overflow = 'hidden';
-            }
-            return () => {
-                document.body.style.overflow = originalOverflow;
-            };
-        }, []);
-
-        useEffect(() => {
-            if (isFullscreen) {
-                document.body.style.overflow = '';
-            } else {
-                document.body.style.overflow = 'hidden';
-            }
-        }, [isFullscreen]);
 
         const loadTabs = useCallback(() => {
             fetch('/~/api/quickpages/tabs')
@@ -450,6 +546,29 @@
         const multiColumns = useMemo(() => {
             return getMultiColumns();
         }, [getMultiColumns]);
+
+        // ====== 右側分割面板的拖曳分隔條 ======
+        const renderPanelResizer = () => {
+            if (isMobile || isFullscreen) return null;
+            return h('div', {
+                className: 'qp-panel-resizer',
+                role: 'separator',
+                'aria-orientation': 'vertical',
+                onPointerDown: handlePanelResizeStart,
+                onPointerMove: handlePanelResizeMove,
+                onPointerUp: handlePanelResizeEnd,
+                onPointerCancel: handlePanelResizeEnd
+            },
+                h('span', {
+                    className: 'qp-panel-resizer-grip',
+                    'aria-hidden': 'true',
+                    onPointerDown: handlePanelResizeStart,
+                    onPointerMove: handlePanelResizeMove,
+                    onPointerUp: handlePanelResizeEnd,
+                    onPointerCancel: handlePanelResizeEnd
+                })
+            );
+        };
 
         // ====== 渲染内联 tabs（仅全屏模式使用） ======
         const renderTabsInline = () => {
@@ -581,6 +700,7 @@
                     zIndex: 9999
                 } : {}
             },
+                renderPanelResizer(),
                 h('div', { 
                     className: 'qp-panel-header', 
                     ref: headerRef,
@@ -625,6 +745,7 @@
                 zIndex: 9999
             } : {}
         },
+            renderPanelResizer(),
             // Header 标题行
             h('div', { 
                 className: 'qp-panel-header', 
@@ -808,7 +929,7 @@
     // ====== QuickPageApp - 在框架外渲染 ======
     function QuickPageApp() {
         const { username } = HFS.useSnapState();
-        const [show, setShow] = useState(false);
+        const [show, setShow] = useState(loadQpPanelShow);
         const [hasAccess, setHasAccess] = useState(false);
         const [publicTabs, setPublicTabs] = useState([]);
         const [isGuest, setIsGuest] = useState(false);
@@ -816,6 +937,7 @@
         const showRef = useRef(false);
 
         useEffect(() => { showRef.current = show; }, [show]);
+        useEffect(() => { saveQpPanelShow(show); }, [show]);
 
         // ====== 检查访问权限 ======
         useEffect(() => {
@@ -832,6 +954,26 @@
             window.addEventListener('toggle-quickpages', fn);
             return () => window.removeEventListener('toggle-quickpages', fn);
         }, []);
+
+        // Notes 開啟時會派發 close-quickpages，避免兩個右側面板重疊
+        useEffect(() => {
+            const close = () => setShow(false);
+            window.addEventListener('close-quickpages', close);
+            return () => window.removeEventListener('close-quickpages', close);
+        }, []);
+
+        // 面板顯示時同步 body class；關閉時立即清掉（React 樹是手動移除的，
+        // 不能只依賴 panel 的 effect cleanup）。無權限時也不要讓主界面讓位。
+        useEffect(() => {
+            if (show && hasAccess) {
+                document.body.classList.add('qp-panel-layout', 'qp-panel-open');
+            } else {
+                document.body.classList.remove('qp-panel-layout', 'qp-panel-open', 'qp-panel-resizing');
+            }
+            return () => {
+                document.body.classList.remove('qp-panel-layout', 'qp-panel-open', 'qp-panel-resizing');
+            };
+        }, [show, hasAccess]);
 
         // ====== 使用 createElement 在框架外渲染 ======
         useEffect(() => {
