@@ -548,6 +548,7 @@
         }, [getMultiColumns]);
 
         // ====== 右側分割面板的拖曳分隔條 ======
+        // 分界線使用面板的 faint border-left，邊緣保留小手柄按鈕提示可拖曳
         const renderPanelResizer = () => {
             if (isMobile || isFullscreen) return null;
             return h('div', {

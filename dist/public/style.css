@@ -35,7 +35,7 @@
     width: var(--qp-panel-width, 450px) !important;
     min-width: 300px !important;
     max-width: 80vw !important;
-    border-left: 1px solid var(--text) !important;
+    border-left: 1px solid var(--faint-contrast) !important;
     backdrop-filter: blur(4px) !important;
     animation: qpSlideRight 0.5s ease-out !important;
     /*box-shadow: -8px 0 40px rgba(0, 0, 0, 0.5) !important;*/
@@ -54,7 +54,7 @@
     right: 0 !important;
     height: 99.8% !important;
     border-radius: 6px 6px 0 0 !important;
-    border: 1px solid var(--text) !important;
+    border: 1px solid var(--faint-contrast) !important;
     border-bottom: none !important;
     backdrop-filter: blur(4px) !important;
     animation: qpSlideUp 0.5s ease-out !important;
@@ -463,7 +463,8 @@
    右側分割面板：拖曳分隔條、主界面讓位、窄屏 Tree-nav 聯動
    ============================================================ */
 
-/* 面板左緣的拖曳命中區（分界線直接使用面板的 border-left） */
+/* 面板左緣的拖曳命中區：視覺分界線是面板的 faint border-left，
+   中間保留一個小手柄按鈕（grip）提示可拖曳 */
 .qp-panel-resizer {
     position: absolute;
     top: 0;
