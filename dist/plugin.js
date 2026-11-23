@@ -1,6 +1,6 @@
 exports.version = 2.6
 exports.description = "A quick-access panel for HFS that lets users switch between multiple web pages via custom tabs."
-exports.repo = "Hug3O/QuickPages"
+exports.repo = "hugo529100/hfs-QuickPages"
 exports.apiRequired = 8.87
 exports.frontend_js = ['main.js']
 exports.frontend_css = ['style.css']
